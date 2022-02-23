@@ -1,0 +1,7 @@
+module testing.a
+{ext|PostfixOperators, PackageImports}
+infixl 6 +
+postfix %
+
+x :: Float
+x = 100% + 50%

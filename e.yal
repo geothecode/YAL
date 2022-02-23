@@ -1,0 +1,24 @@
+infixl 6 +
+infixl 7 *
+/*\ this will produce an error without extension => infixr -4 **
+
+-- IDEA: make type parser just like an expression one
+{ext|LowPrecedenceOperators}
+infixr -1 ->
+
+/*
+ * Expressions in YAL
+\*
+-- TODO: declarations like this one down here
+-- (+) = {ffi|(+)}
+
+-- TODO: lambdas, functions, recursive calls and other stuff
+-- snd :: (a, b) -> a
+-- or snd :: a * b -> a which will be equivalent
+-- snd = lam (x, y) -> y
+
+-- fst = \(a, _) -> a
+
+-- fib 0 = 1
+-- fib n = fib (n - 1) + fib (n - 2)
+-- parser sees the fib name in the fib declaration and places True into rec record in PE datatype and continues parsing
