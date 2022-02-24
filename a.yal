@@ -1,4 +1,5 @@
 module testing.a
+module t
 {ext|PostfixOperators, PackageImports}
 infixl 6 +
 postfix %

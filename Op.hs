@@ -2,7 +2,8 @@
     LANGUAGE
         OverloadedStrings,
         RecordWildCards,
-        NamedFieldPuns
+        NamedFieldPuns,
+        PatternSynonyms
 #-}
 module Op where
 
@@ -19,14 +20,17 @@ import qualified Data.Map as M
 import Text.Megaparsec.Debug
 import Text.Megaparsec (between)
 import Data.List hiding (insert)
+import Data.Set (Set)
+import qualified Data.Set as S
 
-type Table = Map Int [Operator Parser Expr]
-type Extensions = [Extension]
+type Table a = Map Int [Operator Parser a]
+type Extensions = Set Extension
 -- parsing environment
 data PE = PE
     {
-        btable :: Table
-    ,   utable :: Table
+        btable :: Table Expr
+    ,   utable :: Table Expr
+    ,   typetable :: Table Type
     ,   exts :: Extensions
     ,   rec :: Bool -- used for parsing let rec expressions
     ,   lastoffset :: Int -- last errror offset
@@ -41,6 +45,15 @@ warn text = do
     put PE{warnings = (o,text):warnings, ..}
     return (Decl $ Warning text)
 
+turnOn :: Extension -> Parser ()
+turnOn e = do
+    PE{exts, ..} <- get
+    put (PE{exts = S.insert e exts, ..})
+
+turnOff :: Extension -> Parser ()
+turnOff e = do
+    PE{exts, ..} <- get
+    put (PE{exts = S.delete e exts, ..})
 
 type Parser = ParsecT Void Text (State PE)
 
@@ -77,10 +90,12 @@ data Expr
     | Lit Literal
     | If Expr Expr Expr
     | Fix Expr
+    | DataC Name
     | Infix Name Expr Expr
     | Postfix Name Expr
     | Prefix Name Expr
     | Pragma Pragma
+    | TypeOf Name Scheme
     | Decl Declaration
     | Meta Expr
     deriving (Show, Eq, Ord)
@@ -101,7 +116,7 @@ data Quantifier
 
 data Pragma
     = FFI Language Text -- represents ffi from <lang> in form of textual representation of source code, which can be parsed later
-    | EXT [Extension] -- extension
+    | EXT Extensions -- extension
     | OPTS Text -- compiler options
     -- e. g.
     deriving (Show, Eq, Ord)
@@ -140,6 +155,10 @@ kwrds =
     ,   "else"
     ,   "lam"
     ,   "\\"
+    ,   "forall"
+    ,   "rec"
+    ,   "fix"
+    -- ,   "exists"
     ]
 
 name :: Parser Text
@@ -166,7 +185,17 @@ parens = between (symbol "(") (symbol ")")
 
 -- higher = bigger precedence
 initPE :: PE
-initPE = PE{btable = M.fromList [], utable = {- insert (9, unary' "@") $ -} M.fromList [], exts = [], rec = False, lastoffset = 0, tmodule = Nothing, warnings = []}
+initPE = PE
+    {
+        btable = M.fromList []
+    ,   utable = {- insert (9, unary' "@") $ -} M.fromList []
+    ,   typetable = insert (-1, InfixR (TypeArrow <$ symbol "->")) (M.fromList [])
+    ,   exts = S.fromList []
+    ,   rec = False
+    ,   lastoffset = 0
+    ,   tmodule = Nothing
+    ,   warnings = []
+    }
 {- @ is used to reference to this particular type-variable -}
 
 -- Maybe we should return (Var a) for unification purposes ? ISSUE:
@@ -181,13 +210,13 @@ unary a = Control.Monad.Combinators.Expr.Postfix (Op.Postfix a <$ symbol a)
 unary' :: Text -> Operator Parser Expr
 unary' a = Control.Monad.Combinators.Expr.Prefix (Op.Prefix a <$ symbol a)
 
-flat :: Table -> [[Operator Parser Expr]]
+flat :: Table a -> [[Operator Parser a]]
 flat a = snd <$> M.toDescList a
 
-insert :: (Int, Operator Parser Expr) -> Table -> Table
+insert :: (Int, Operator Parser a) -> Table a -> Table a
 insert (a,b) xs = M.insertWith (<>) a [b] xs
 
-insert' :: [(Int, Operator Parser Expr)] -> Table -> Table
+insert' :: [(Int, Operator Parser a)] -> Table a -> Table a
 insert' xs ys = foldr insert ys xs
 
 
@@ -262,9 +291,9 @@ pPragma = lexeme $ curly $ do
         "ext" -> do
             bar
             PE{exts = e, ..} <- get
-            exts <- (e <>) <$> pExtensions `sepBy1` symbol ","
-            put PE{..}
-            return (Pragma $ EXT exts)
+            exs <- S.fromList <$> pExtensions `sepBy1` symbol ","
+            put PE{exts = S.union e exs, ..}
+            return (Pragma $ EXT exs)
         "meta" -> do
             bar
             Meta <$> expr
@@ -276,11 +305,11 @@ pPragma = lexeme $ curly $ do
 curly :: Parser a -> Parser a
 curly = between (symbol "{") (symbol "}")
 
-argsTo :: Parser a -> Parser [Text]
-argsTo p = choice
+argsTo :: Parser a -> Parser b -> Parser [b]
+argsTo p a = choice
     [
         p $> []
-    ,   (<>) <$> (return <$> name) <*> argsTo p
+    ,   (<>) <$> (return <$> a) <*> argsTo p a
     ]
 
 construct :: [Text] -> Expr -> Expr
@@ -295,7 +324,7 @@ pOp' = (T.pack <$> lexeme (some (oneOf ("+-$%&^*/?.,~@<>|#=:" :: String))))
 pLam :: Parser Expr
 pLam = Lam <$> 
         ((keyword "lam" <|> symbol "\\") *> name) -- lam x OR \x
-    <*> ((construct <$> argsTo (symbol "->")) >>= (\a -> a <$> expr)) -- zero or some other args and -> followed by expr
+    <*> ((construct <$> argsTo (symbol "->") name) >>= (\a -> a <$> expr)) -- zero or some other args and -> followed by expr
 
 pExtensions :: Parser Extension
 pExtensions = choice
@@ -313,7 +342,7 @@ pExtensions = choice
     ]   <?> "extension"
 
 pLet :: Parser Expr
-pLet = Let <$> (keyword "let" *> name) <*> (((construct <$> argsTo (symbol "=")) >>= (\a -> a <$> expr)) <|> (symbol "=" *> expr)) <*> (keyword "in" *> expr)
+pLet = Let <$> (keyword "let" *> name) <*> (((construct <$> argsTo (symbol "=") name) >>= (\a -> a <$> expr)) <|> (symbol "=" *> expr)) <*> (keyword "in" *> expr)
 
 -- TODO: pattern matching and stuff combinators
 -- "c" in name for COMBINATOR
@@ -382,6 +411,7 @@ term =
         ,   pLam
         ,   pLet
         ,   pVar
+        ,   pDataConstructor
         ,   pNum
         ]
 
@@ -390,6 +420,7 @@ top =
     choice
         [
             try pDecl
+        ,   try pType
         ,   pModule
         ,   pImport
         ,   pInfix
@@ -419,12 +450,10 @@ test p t = case evalState (runParserT p "<input>" t) initPE of
 -- Top-Level Parsers
 
 pDecl :: Parser Expr
-pDecl = Decl <$> (Const <$> name <*> (((construct <$> argsTo (symbol "=")) >>= (\a -> a <$> expr)) <|> (symbol "=" *> expr)))
+pDecl = Decl <$> (Const <$> name <*> (((construct <$> argsTo (symbol "=") name) >>= (\a -> a <$> expr)) <|> (symbol "=" *> expr)))
 
 pApp :: Parser Expr
 pApp = lexeme $ (\a b -> foldl App a b) <$> term <*> some term <* notFollowedBy (keyword "=" <|> keyword "->")
--- pTypeSig :: Parser Expr -- TODO: type level operators and makeExprParser for them (maybe use state?)
--- pTypeSig = name <*> 
 
 pIf :: Parser Expr
 pIf = do
@@ -436,4 +465,68 @@ pIf = do
     e3 <- expr
     return (If e1 e2 e3)
 
+pDataName :: Parser Text
+pDataName = lexeme (T.cons <$> upperChar <*> (T.pack <$> many alphaNumChar))
 
+pDataConstructor :: Parser Expr
+pDataConstructor = DataC <$> pDataName
+
+-- | Types
+
+newtype TypeVariable = TVar Name
+    deriving (Show, Eq, Ord)
+data Type =
+    TypeVariable TypeVariable   |
+    TypeConstant Name           |
+    TypeArrow Type Type         
+    deriving (Show, Eq, Ord)
+data Scheme =
+    Forall [TypeVariable] Type
+    deriving (Show, Eq, Ord)
+
+infixr `TypeArrow`
+infixr :->
+pattern (:->) a b <- (a `TypeArrow` b)
+    where (:->) = (TypeArrow)
+
+pTypeVar :: Parser TypeVariable
+pTypeVar = TVar <$> name
+
+pTypeConst :: Parser Type
+pTypeConst = TypeConstant <$> pDataName
+
+pForall :: Parser [TypeVariable]
+pForall = do
+    keyword "forall"
+    vars <- argsTo (symbol ".") pTypeVar
+    return vars
+
+pTypeE :: Parser Type
+pTypeE = 
+    choice
+        [
+            TypeVariable <$> pTypeVar
+        ,   pTypeConst
+        ]
+
+pTypeExpr :: Parser Type
+pTypeExpr = do
+    e <- get
+    makeExprParser pTypeE (flat (typetable e)) -- WORKS!!!!!
+
+pType :: Parser Expr
+pType = lexeme $ do
+    n <- name
+    symbol "::"
+    f <- optional $ pForall
+    t <- pTypeExpr
+    case f of
+        Just fl -> return (TypeOf n (Forall fl t))
+        Nothing -> return (TypeOf n (Forall [] t)) -- TODO: add generalization, when no forall specified [for convenience]
+
+-- typeExpr :: Parser Scheme
+
+-- TODO: type application and KINDS and stuff and maybe CONSTRAINTS
+
+-- pTypeSig :: Parser Expr -- TODO: type level operators and makeExprParser for them (maybe use state?)
+-- pTypeSig = do
