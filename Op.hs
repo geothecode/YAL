@@ -131,14 +131,34 @@ a $> b = b <$ a
 data I = N | L | R | Post
     deriving (Show, Eq, Ord)
 
+kwrds :: [Text]
+kwrds = 
+    [
+        "let"
+    ,   "if"
+    ,   "then"
+    ,   "else"
+    ,   "lam"
+    ,   "\\"
+    ]
+
 name :: Parser Text
-name = lexeme (T.cons <$> lowerChar <*> (T.pack <$> many alphaNumChar))
+name = do
+    nm <- lexeme (T.cons <$> lowerChar <*> (T.pack <$> many alphaNumChar))
+    if nm `elem` kwrds
+        then empty
+        else return nm
 
 pVar :: Parser Expr
 pVar = Var <$> name
 
 pNum :: Parser Expr
-pNum = Lit <$> Number <$> lexeme Lexer.decimal
+pNum = Lit <$> Number <$> (lexeme $ do 
+    n <- optional $ char '-'
+    num <- Lexer.decimal
+    return $ case n of
+        Just _ -> negate num
+        Nothing -> num)
 
 parens :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")
@@ -171,7 +191,7 @@ insert' :: [(Int, Operator Parser Expr)] -> Table -> Table
 insert' xs ys = foldr insert ys xs
 
 
-pInfix :: Parser Expr -- change me to ()
+pInfix :: Parser Expr
 pInfix = do
     t <- choice 
         [
@@ -202,7 +222,7 @@ pInfix = do
                             fail "precedence cannot be lower than 0, maybe you meant LowPrecedenceOperators instead?")
                         else return a
     Var op <- pOp
-    PE{..} <- get
+    PE{btable, ..} <- get
     put (PE{btable = insert (f, binary t op) btable, ..})
     return (Decl $ Op op t f)
 
@@ -260,9 +280,7 @@ argsTo :: Parser a -> Parser [Text]
 argsTo p = choice
     [
         p $> []
-    ,   (<>) <$> ((\a -> [a]) <$> name) <*> argsTo p
-    ,   argsTo p
-    ,   empty $> []
+    ,   (<>) <$> (return <$> name) <*> argsTo p
     ]
 
 construct :: [Text] -> Expr -> Expr
@@ -307,10 +325,6 @@ cIfTurnedOn ext a b = do
         then a
         else b
 
-pApp :: Parser Expr
-pApp = (\a b -> foldl App a b) <$> term <*> some term <* notFollowedBy (keyword "=")
-
-
 pName :: Parser Text
 pName = lexeme (T.cons <$> (upperChar <|> lowerChar) <*> (T.pack <$> many alphaNumChar))
 
@@ -341,12 +355,11 @@ pImport = lexeme $ do
 
 pModule :: Parser Expr
 pModule = do
-    PE{tmodule,..} <- get
+    PE{tmodule, ..} <- get
     case tmodule of
         Nothing -> do
             keyword "module"
             mod <- Module <$> lexeme (pName `sepBy1` symbol ".") <?> "module name"
-            PE{..} <- get
             put PE{tmodule = Just mod, ..}
             return (Decl mod)
         Just a -> do
@@ -362,9 +375,10 @@ term :: Parser Expr
 term =
     choice
         [
-            parens pOp
+            try (parens pOp)
         ,   parens expr
         -- ,   cIfTurnedOn PatternMatching pPLam pLam -- for example
+        ,   pIf
         ,   pLam
         ,   pLet
         ,   pVar
@@ -375,7 +389,8 @@ top :: Parser Expr
 top = 
     choice
         [
-            pModule
+            try pDecl
+        ,   pModule
         ,   pImport
         ,   pInfix
         ,   cIfTurnedOn PostfixOperators pPostfix empty
@@ -394,7 +409,7 @@ top =
 expr :: Parser Expr
 expr = do
     e <- get
-    makeExprParser (top <|> try (parens pApp <|> pApp) <|> pDecl <|> term) (flat $ utable e <> btable e) -- WORKS!!!!!
+    makeExprParser (top <|> try pApp <|> term) (flat $ utable e <> btable e) -- WORKS!!!!!
 
 test :: Show a => Parser a -> Text -> IO ()
 test p t = case evalState (runParserT p "<input>" t) initPE of
@@ -406,5 +421,19 @@ test p t = case evalState (runParserT p "<input>" t) initPE of
 pDecl :: Parser Expr
 pDecl = Decl <$> (Const <$> name <*> (((construct <$> argsTo (symbol "=")) >>= (\a -> a <$> expr)) <|> (symbol "=" *> expr)))
 
+pApp :: Parser Expr
+pApp = lexeme $ (\a b -> foldl App a b) <$> term <*> some term <* notFollowedBy (keyword "=" <|> keyword "->")
 -- pTypeSig :: Parser Expr -- TODO: type level operators and makeExprParser for them (maybe use state?)
 -- pTypeSig = name <*> 
+
+pIf :: Parser Expr
+pIf = do
+    keyword "if"
+    e1 <- expr
+    keyword "then"
+    e2 <- expr
+    keyword "else"
+    e3 <- expr
+    return (If e1 e2 e3)
+
+
