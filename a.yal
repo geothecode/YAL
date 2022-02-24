@@ -1,8 +1,10 @@
 module testing.a
-module t
 {ext|PostfixOperators, PackageImports}
 infixl 6 +
 postfix %
 
 x :: Float
 x = 100% + 50%
+
+y :: forall a. a -> a
+y = fix lam x -> 42

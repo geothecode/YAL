@@ -388,13 +388,15 @@ pModule = do
     case tmodule of
         Nothing -> do
             keyword "module"
-            mod <- Module <$> lexeme (pName `sepBy1` symbol ".") <?> "module name"
+            mod <- Module <$> (lexeme (pName `sepBy1` symbol ".")) <?> "module name"
             put PE{tmodule = Just mod, ..}
             return (Decl mod)
         Just a -> do
             fail "module had been already declared"
 
 
+pFix :: Parser Expr
+pFix = Fix <$> lexeme (keyword "fix" *> expr)
 
 fromMaybe :: (Maybe a) -> [a]
 fromMaybe Nothing = []
@@ -406,6 +408,7 @@ term =
         [
             try (parens pOp)
         ,   parens expr
+        ,   pFix
         -- ,   cIfTurnedOn PatternMatching pPLam pLam -- for example
         ,   pIf
         ,   pLam
