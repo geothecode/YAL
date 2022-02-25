@@ -5,7 +5,7 @@
         NamedFieldPuns,
         PatternSynonyms
 #-}
-module Op where
+module Parsing where
 
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -23,8 +23,9 @@ import Data.List hiding (insert)
 import Data.Set (Set)
 import qualified Data.Set as S
 
+import Syntax
+
 type Table a = Map Int [Operator Parser a]
-type Extensions = Set Extension
 -- parsing environment
 data PE = PE
     {
@@ -73,78 +74,7 @@ symbol = Lexer.symbol spaces
 keyword :: Text -> Parser Text
 keyword a = lexeme (string a <* notFollowedBy alphaNumChar)
 
-type Name = Text
 
-data Literal
-    = Number Int
-    | Boolean Bool
-    | Text Text
-    | Character Char
-    deriving (Show, Eq, Ord)
-
-data Expr
-    = Var Name
-    | App Expr Expr
-    | Lam Name Expr
-    | Let Name Expr Expr
-    | Lit Literal
-    | If Expr Expr Expr
-    | Fix Expr
-    | DataC Name
-    | Infix Name Expr Expr
-    | Postfix Name Expr
-    | Prefix Name Expr
-    | Pragma Pragma
-    | TypeOf Name Scheme
-    | Decl Declaration
-    | Meta Expr
-    deriving (Show, Eq, Ord)
-
-data Declaration
-    = Op Name I Int
-    | Warning Name
-    | Import [Name] [Quantifier]
-    | Module [Name]
-    | Const Name Expr
-    deriving (Show, Eq, Ord)
-
-data Quantifier
-    = Hiding [Text]
-    | Qualified Text
-    | From Text -- PackageImports
-    deriving (Show, Eq, Ord)
-
-data Pragma
-    = FFI Language Text -- represents ffi from <lang> in form of textual representation of source code, which can be parsed later
-    | EXT Extensions -- extension
-    | OPTS Text -- compiler options
-    -- e. g.
-    deriving (Show, Eq, Ord)
-
-data Language
-    = Haskell
-    | C
-    deriving (Show, Eq, Ord)
-
-data Extension
-    = LowPrecedenceOperators
-    | HighPrecedenceOperators
-    | AnyPrecedenceOperators
-    | LinearTypes
-    | DependentTypes -- one day probably
-    | LazyEvaluation -- one day probably
-    | Wildcards
-    | PatternMatching -- pretty small amount but
-    | PostfixOperators
-    | PackageImports
-    | None
-    deriving (Show, Eq, Ord)
-
-infixr 6 $>
-a $> b = b <$ a
-
-data I = N | L | R | Post
-    deriving (Show, Eq, Ord)
 
 kwrds :: [Text]
 kwrds = 
@@ -207,10 +137,10 @@ binary L a = InfixL (Infix a <$ symbol a)
 binary R a = InfixR (Infix a <$ symbol a)
 
 unary :: Text -> Operator Parser Expr
-unary a = Control.Monad.Combinators.Expr.Postfix (Op.Postfix a <$ symbol a)
+unary a = Control.Monad.Combinators.Expr.Postfix (Syntax.Postfix a <$ symbol a)
 
 unary' :: Text -> Operator Parser Expr
-unary' a = Control.Monad.Combinators.Expr.Prefix (Op.Prefix a <$ symbol a)
+unary' a = Control.Monad.Combinators.Expr.Prefix (Syntax.Prefix a <$ symbol a)
 
 flat :: Table a -> [[Operator Parser a]]
 flat a = snd <$> M.toDescList a
@@ -498,22 +428,6 @@ pDataConstructor :: Parser Expr
 pDataConstructor = DataC <$> pDataName
 
 -- | Types
-
-newtype TypeVariable = TVar Name
-    deriving (Show, Eq, Ord)
-data Type =
-    TypeVariable TypeVariable   |
-    TypeConstant Name           |
-    TypeArrow Type Type         
-    deriving (Show, Eq, Ord)
-data Scheme =
-    Forall [TypeVariable] Type
-    deriving (Show, Eq, Ord)
-
-infixr `TypeArrow`
-infixr :->
-pattern (:->) a b <- (a `TypeArrow` b)
-    where (:->) = (TypeArrow)
 
 pTypeVar :: Parser TypeVariable
 pTypeVar = TVar <$> name
