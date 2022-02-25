@@ -187,7 +187,7 @@ parens = between (symbol "(") (symbol ")")
 initPE :: PE
 initPE = PE
     {
-        btable = M.fromList []
+        btable = insert (7, InfixL (try (ticks (name <|> try (parens name) <|> parens pOp') >>= (\a -> return (Infix a))))) (M.fromList [])
     ,   utable = {- insert (9, unary' "@") $ -} M.fromList []
     ,   typetable = insert (-1, InfixR (TypeArrow <$ symbol "->")) (M.fromList [])
     ,   exts = S.fromList []
@@ -256,7 +256,7 @@ pInfix = do
     return (Decl $ Op op t f)
 
 pPostfix :: Parser Expr
-pPostfix = do
+pPostfix = lexeme $ do
     t <- keyword "postfix" $> Post
     f <- return 9 -- mostly TODO:
     Var op <- pOp
@@ -342,7 +342,7 @@ pExtensions = choice
     ]   <?> "extension"
 
 pLet :: Parser Expr
-pLet = Let <$> (keyword "let" *> name) <*> (((construct <$> argsTo (symbol "=") name) >>= (\a -> a <$> expr)) <|> (symbol "=" *> expr)) <*> (keyword "in" *> expr)
+pLet = lexeme (Let <$> (keyword "let" *> name) <*> (((construct <$> argsTo (symbol "=") name) >>= (\a -> a <$> expr)) <|> (symbol "=" *> expr)) <*> (keyword "in" *> expr))
 
 -- TODO: pattern matching and stuff combinators
 -- "c" in name for COMBINATOR
@@ -422,11 +422,13 @@ top :: Parser Expr
 top = 
     choice
         [
-            try pDecl
+            try pInfixDecl
+        ,   try pDecl
         ,   try pType
         ,   pModule
         ,   pImport
         ,   pInfix
+        ,   pPostfix
         ,   cIfTurnedOn PostfixOperators pPostfix empty
         ,   pPragma
         ]
@@ -441,7 +443,7 @@ top =
 -}
 
 expr :: Parser Expr
-expr = do
+expr = lexeme $ do
     e <- get
     makeExprParser (top <|> try pApp <|> term) (flat $ utable e <> btable e) -- WORKS!!!!!
 
@@ -450,13 +452,32 @@ test p t = case evalState (runParserT p "<input>" t) initPE of
     Right x -> print x
     Left e -> putStrLn $ errorBundlePretty e
 
+testIO :: Show a => Parser a -> IO ()
+testIO p = do
+    line@(l:ls) <- getLine
+    case l of
+        '@' -> putStr "Exiting..."
+        _ -> test p (T.pack line) >> testIO p
+
 -- Top-Level Parsers
 
+ticks :: Parser a -> Parser a
+ticks = between (symbol "`") (symbol "`")
+
 pDecl :: Parser Expr
-pDecl = Decl <$> (Const <$> name <*> (((construct <$> argsTo (symbol "=") name) >>= (\a -> a <$> expr)) <|> (symbol "=" *> expr)))
+pDecl = Decl <$> (Const <$> (parens pOp' <|> name) <*> (((construct <$> argsTo (symbol "=") name) >>= (\a -> a <$> expr)) <|> (symbol "=" *> expr)))
+
+pInfixDecl :: Parser Expr
+pInfixDecl = Decl <$> do
+    l <- name
+    op <- (pOp' <|> ticks name)
+    r <- name
+    symbol "="
+    e <- expr
+    return (Const op (Lam l (Lam r e)))
 
 pApp :: Parser Expr
-pApp = lexeme $ (\a b -> foldl App a b) <$> term <*> some term <* notFollowedBy (keyword "=" <|> keyword "->")
+pApp = lexeme $ (\a b -> foldl App a b) <$> term <*> some term <* notFollowedBy (keyword "=" <|> keyword "->" <|> (pDecl $> T.empty) <|> (pType $> T.empty))
 
 pIf :: Parser Expr
 pIf = do
@@ -533,3 +554,5 @@ pType = lexeme $ do
 
 -- pTypeSig :: Parser Expr -- TODO: type level operators and makeExprParser for them (maybe use state?)
 -- pTypeSig = do
+
+-- TODO: indentations (tabs and so on)
