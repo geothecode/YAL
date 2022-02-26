@@ -1,10 +1,14 @@
+##
+ #  Maintainer: Georgiy Brovkin (@geothecode)
+ #  YAL "Team" 2022 (c)
+##
 module prelude
 
-{|
- | Prelude YAL Module
- |    * defines operators
- |    * defines basic datatypes
- |}
+##
+ # Prelude YAL Module
+ #    * defines operators
+ #    * defines basic datatypes
+##
 
 data Int
 data Bool = True | False

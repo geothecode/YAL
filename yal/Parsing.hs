@@ -74,8 +74,8 @@ pLineComment =
 
 pBlockComment :: Parser ()
 pBlockComment = 
-        Lexer.skipBlockComment "{|" "|}"
-    -- <|> Lexer.skipBlockComment "/*" "\\*" 
+        Lexer.skipBlockComment "##" "##"
+        -- Lexer.skipBlockComment "{-" "-}" 
 
 lexeme :: Parser a -> Parser a
 lexeme = Lexer.lexeme spaces
@@ -390,6 +390,7 @@ top =
 
 expr :: Parser Expr
 expr = lexeme $ do
+    optional spaces
     e <- get
     makeExprParser (top <|> try pApp <|> term) (flat $ utable e <> btable e) -- WORKS!!!!!
 
