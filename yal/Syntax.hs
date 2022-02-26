@@ -11,6 +11,8 @@ import Data.Set (Set)
 type Extensions = Set Extension
 type Name = Text
 
+-- | General Syntax
+
 data Literal
     = Number Int
     | Boolean Bool
@@ -42,7 +44,10 @@ data Declaration
     | Import [Name] [Quantifier]
     | Module [Name]
     | Const Name Expr
-    deriving (Show, Eq, Ord)
+    | Data Name [Name] -- since we dont have args yet 
+    deriving (Show, Eq, Ord)    
+
+-- data Bool <args> = <constructor> <args> [<OR> ...]
 
 data Quantifier
     = Hiding [Text]
@@ -82,18 +87,28 @@ a $> b = b <$ a
 data I = N | L | R | Post
     deriving (Show, Eq, Ord)
 
-newtype TypeVariable = TVar Name
+-- | Types
+newtype TypeVar = TVar Name
     deriving (Show, Eq, Ord)
 data Type =
-    TypeVariable TypeVariable   |
+    TypeVar TypeVar             |
     TypeConstant Name           |
     TypeArrow Type Type         
     deriving (Show, Eq, Ord)
 data Scheme =
-    Forall [TypeVariable] Type
+    Forall [TypeVar] Type
     deriving (Show, Eq, Ord)
 
 infixr `TypeArrow`
 infixr :->
 pattern (:->) a b <- (a `TypeArrow` b)
     where (:->) = (TypeArrow)
+
+-- | Errors
+
+data TypeCheckerError
+    = UnificationFail Type Type
+    | InfiniteType TypeVar Type
+    | NotInSignature TypeVar
+    | UnboundVariable Name
+    deriving (Show, Eq, Ord)

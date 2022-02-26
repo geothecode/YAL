@@ -1,0 +1,26 @@
+module prelude
+
+{|
+ | Prelude YAL Module
+ |    * defines operators
+ |    * defines basic datatypes
+ |}
+
+data Int
+data Bool = True | False
+
+infixl 6 +
+(+) :: Int -> Int -> Int
+a + b = {ffi|(+)}
+
+infixl 6 -
+(-) :: Int -> Int -> Int
+a - b = {ffi|(-)}
+
+infixl 7 *
+(*) :: Int -> Int -> Int
+a * b = {ffi|(*)}
+
+infixl 7 /
+(/) :: Int -> Int -> Int
+a / b = {ffi|(/)}

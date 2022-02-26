@@ -29,14 +29,16 @@ type Table a = Map Int [Operator Parser a]
 -- parsing environment
 data PE = PE
     {
-        btable :: Table Expr
-    ,   utable :: Table Expr
-    ,   typetable :: Table Type
-    ,   exts :: Extensions
-    ,   rec :: Bool -- used for parsing let rec expressions
-    ,   lastoffset :: Int -- last errror offset
-    ,   tmodule :: Maybe Declaration
-    ,   warnings :: [(Int, Text)] -- TODO: change to Error from Megaparsec
+        btable      :: Table Expr
+    ,   utable      :: Table Expr
+    ,   typetable   :: Table Type
+    ,   exts        :: Extensions
+    ,   rec         :: Bool -- used for parsing let rec expressions
+    ,   lastoffset  :: Int -- last errror offset
+    ,   tmodule     :: Maybe Declaration
+    ,   warnings    :: [(Int, Text)] -- TODO: change to Error from Megaparsec
+    ,   dtypes      :: Map Name Scheme
+    ,   ddata       :: [Declaration] -- since we dont have data args yet we just collect this references
     }
 
 warn :: Text -> Parser Expr
@@ -62,8 +64,18 @@ spaces :: Parser ()
 spaces = 
     Lexer.space
         space1
-        (Lexer.skipLineComment "/*\\" <|> Lexer.skipLineComment "--")
-        (Lexer.skipBlockComment "/*" "\\*")
+        pLineComment
+        pBlockComment
+
+pLineComment :: Parser ()
+pLineComment = 
+        Lexer.skipLineComment "--"
+    -- <|> Lexer.skipLineComment "/*\\"
+
+pBlockComment :: Parser ()
+pBlockComment = 
+        Lexer.skipBlockComment "{|" "|}"
+    -- <|> Lexer.skipBlockComment "/*" "\\*" 
 
 lexeme :: Parser a -> Parser a
 lexeme = Lexer.lexeme spaces
@@ -73,8 +85,6 @@ symbol = Lexer.symbol spaces
 
 keyword :: Text -> Parser Text
 keyword a = lexeme (string a <* notFollowedBy alphaNumChar)
-
-
 
 kwrds :: [Text]
 kwrds = 
@@ -90,6 +100,7 @@ kwrds =
     ,   "fix"
     ,   "in"
     ,   "where"
+    ,   "data"
     -- ,   "exists"
     ]
 
@@ -119,14 +130,16 @@ parens = between (symbol "(") (symbol ")")
 initPE :: PE
 initPE = PE
     {
-        btable = insert (7, InfixL (try (ticks (name <|> try (parens name) <|> parens pOp') >>= (\a -> return (Infix a))))) (M.fromList [])
-    ,   utable = {- insert (9, unary' "@") $ -} M.fromList []
-    ,   typetable = insert (-1, InfixR (TypeArrow <$ symbol "->")) (M.fromList [])
-    ,   exts = S.fromList []
-    ,   rec = False
-    ,   lastoffset = 0
-    ,   tmodule = Nothing
-    ,   warnings = []
+        btable      = insert (7, InfixL (try (ticks (name <|> try (parens name) <|> parens pOp') >>= (\a -> return (Infix a))))) M.empty
+    ,   utable      = M.empty {- insert (9, unary' "@") $ -}
+    ,   typetable   = insert (-1, InfixR (TypeArrow <$ symbol "->")) M.empty
+    ,   exts        = S.empty
+    ,   rec         = False
+    ,   lastoffset  = 0
+    ,   tmodule     = Nothing
+    ,   warnings    = mempty
+    ,   dtypes      = M.empty
+    ,   ddata       = mempty
     }
 {- @ is used to reference to this particular type-variable -}
 
@@ -320,7 +333,7 @@ pModule = do
     case tmodule of
         Nothing -> do
             keyword "module"
-            mod <- Module <$> (lexeme (pName `sepBy1` symbol ".")) <?> "module name"
+            mod <- Module <$> pName `sepBy1` symbol "." <?> "module name"
             put PE{tmodule = Just mod, ..}
             return (Decl mod)
         Just a -> do
@@ -355,6 +368,7 @@ top =
     choice
         [
             try pInfixDecl
+        ,   try pDataDecl
         ,   try pDecl
         ,   try pType
         ,   pModule
@@ -384,12 +398,18 @@ test p t = case evalState (runParserT p "<input>" t) initPE of
     Right x -> print x
     Left e -> putStrLn $ errorBundlePretty e
 
-testIO :: Show a => Parser a -> IO ()
-testIO p = do
+testIO :: IO ()
+testIO = do
     line@(l:ls) <- getLine
     case l of
         '@' -> putStr "Exiting..."
-        _ -> test p (T.pack line) >> testIO p
+        '!' -> do
+            let mov = case ls of
+                    "d" -> show . ddata
+                    "t" -> show . dtypes
+            (_, pe@PE{..}) <- exec pSource <$> (putStr "expr> " >> T.pack <$> getLine)
+            putStrLn (mov pe) >> testIO
+        _ -> test (fst <$> pSource) (T.pack line) >> testIO
 
 -- Top-Level Parsers
 
@@ -429,13 +449,13 @@ pDataConstructor = DataC <$> pDataName
 
 -- | Types
 
-pTypeVar :: Parser TypeVariable
+pTypeVar :: Parser TypeVar
 pTypeVar = TVar <$> name
 
 pTypeConst :: Parser Type
 pTypeConst = TypeConstant <$> pDataName
 
-pForall :: Parser [TypeVariable]
+pForall :: Parser [TypeVar]
 pForall = do
     keyword "forall"
     vars <- argsTo (symbol ".") pTypeVar
@@ -445,7 +465,7 @@ pTypeE :: Parser Type
 pTypeE = 
     choice
         [
-            TypeVariable <$> pTypeVar
+            TypeVar <$> pTypeVar
         ,   pTypeConst
         ]
 
@@ -456,13 +476,18 @@ pTypeExpr = do
 
 pType :: Parser Expr
 pType = lexeme $ do
-    n <- name
+    n <- (name <|> parens pOp')
     symbol "::"
     f <- optional $ pForall
     t <- pTypeExpr
+    PE{dtypes, ..} <- get
     case f of
-        Just fl -> return (TypeOf n (Forall fl t))
-        Nothing -> return (TypeOf n (Forall [] t)) -- TODO: add generalization, when no forall specified [for convenience]
+        Just fl -> do 
+            put (PE{dtypes = M.singleton n (Forall fl t) <> dtypes, ..})
+            return (TypeOf n (Forall fl t))
+        Nothing -> do
+            put (PE{dtypes = M.singleton n (Forall [] t) <> dtypes, ..})
+            return (TypeOf n (Forall [] t)) -- TODO: add generalization, when no forall specified [for convenience]
 
 -- typeExpr :: Parser Scheme
 
@@ -472,3 +497,32 @@ pType = lexeme $ do
 -- pTypeSig = do
 
 -- TODO: indentations (tabs and so on)
+
+-- | TODO: Data types, but really not
+
+pDataDecl :: Parser Expr
+pDataDecl = do
+    keyword "data"
+    n <- pDataName
+    cs' <- optional $ do
+        symbol "="
+        pDataName `sepBy1` symbol "|"
+    let cs = case cs' of
+            Nothing -> []
+            Just a -> a
+    let d = Data n cs
+    PE{..} <- get
+    let t = M.fromList (fmap (\a -> (a, (Forall [] (TypeConstant n)))) cs)
+    put PE{ddata = d:ddata, dtypes = t <> dtypes, ..}
+    return (Decl d)
+-- demo of data types, just for defining bool, but it can be expanded thru time
+
+-- | Testing
+
+exec p t = runState (runParserT p "input" t) initPE
+
+pSource :: Parser ([Expr], PE)
+pSource = do
+    e <- some expr
+    PE{..} <- get
+    return (e, PE{..})
