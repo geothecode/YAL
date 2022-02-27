@@ -159,9 +159,6 @@ binary R a = InfixR (Infix a <$ symbol a)
 unary :: Text -> Operator Parser Expr
 unary a = Control.Monad.Combinators.Expr.Postfix (Syntax.Postfix a <$ symbol a)
 
-unary' :: Text -> Operator Parser Expr
-unary' a = Control.Monad.Combinators.Expr.Prefix (Syntax.Prefix a <$ symbol a)
-
 flat :: Table a -> [[Operator Parser a]]
 flat a = snd <$> M.toDescList a
 

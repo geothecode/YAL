@@ -5,7 +5,7 @@
         NamedFieldPuns
 #-}
 
-module Typing where
+module Constraint where
 
 import Syntax
 import Parsing                  (PE(..))
@@ -209,13 +209,11 @@ infer e = do
         -- TODO: all type inferences
 
         Decl (Const a e) -> do
-            tv <- fresh
-            record (a, Forall [] tv)
             (s1, t1) <- infer e
-            s2 <- unify (apply s1 tv) t1
-            t <- generalize (apply (s2 <> s1) t1)
+            t <- generalize t1
             record (a, t)
-            return (s2 <> s1, apply (s2 <> s1) t1)
+            update s1
+            return (mempty, t1)
         
         Decl _ -> return (mempty, NoType)
 
@@ -236,30 +234,6 @@ infer e = do
 
 inferMany :: [Expr] -> Typer [(Subst, Type)]
 inferMany = mapM infer
-
-normalize :: Scheme -> Typer Scheme
-normalize f@(Forall ts t) = do
-    typ <- norm t
-    return (Forall (snd <$> tv) typ)
-    where
-        tv = zip (S.toList (free f)) (TVar <$> letters)
-        norm (TypeConstant a) = return (TypeConstant a)
-        norm (TypeVar a) = case lookup a tv of
-            Just x -> return (TypeVar x)
-            Nothing -> throwError (NotInSignature a)
-        norm (a :-> b) = do
-            l <- norm a 
-            r <- norm b
-            return (l :-> r)
-
-closeOver :: Typer (Subst, Type) -> Typer Scheme
-closeOver a = do
-    (s, t) <- a
-    sc <- generalize (apply s t)
-    normalize sc
-
-runInfer :: Typer (Subst, Type) -> Either TypeCheckerError Scheme
-runInfer a = evalState (runExceptT (closeOver a)) initTE
 
 fromFixity :: Expr -> Expr
 fromFixity (Infix a l r) = App (App (Var a) l) r

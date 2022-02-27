@@ -29,7 +29,6 @@ data Expr
     | Fix Expr
     | Infix Name Expr Expr
     | Postfix Name Expr
-    | Prefix Name Expr
     | Pragma Pragma
     | TypeOf Name Scheme
     | Decl Declaration
