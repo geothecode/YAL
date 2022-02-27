@@ -101,6 +101,13 @@ kwrds =
     ,   "in"
     ,   "where"
     ,   "data"
+    ,   "->"
+    ,   "="
+    ,   "::"
+    ,   "infixl"
+    ,   "infixr"
+    ,   "infix"
+    ,   "postfix"
     -- ,   "exists"
     ]
 
@@ -430,7 +437,14 @@ pInfixDecl = Decl <$> do
     return (Const op (Lam l (Lam r e)))
 
 pApp :: Parser Expr
-pApp = lexeme $ (\a b -> foldl App a b) <$> term <*> some term <* notFollowedBy (keyword "=" <|> keyword "->"  <|> keyword "in" <|> keyword "where" <|> (pDecl $> T.empty) <|> (pType $> T.empty))
+pApp = lexeme $
+        (\a b -> foldl App a b)
+    <$> term
+    <*> some term
+    <* notFollowedBy 
+           ((choice (keyword <$> kwrds))
+        <|> (pDecl $> T.empty) 
+        <|> (pType $> T.empty))
 
 pIf :: Parser Expr
 pIf = do
@@ -446,7 +460,7 @@ pDataName :: Parser Text
 pDataName = lexeme (T.cons <$> upperChar <*> (T.pack <$> many alphaNumChar))
 
 pDataConstructor :: Parser Expr
-pDataConstructor = DataC <$> pDataName
+pDataConstructor = Var <$> pDataName
 
 -- | Types
 

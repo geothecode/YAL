@@ -1,0 +1,8 @@
+x = 2
+infixl 6 +
+
+data Int
+
+(+) :: a -> a -> a 
+
+y = lam a -> a + x

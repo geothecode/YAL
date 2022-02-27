@@ -15,7 +15,6 @@ type Name = Text
 
 data Literal
     = Number Int
-    | Boolean Bool
     | Text Text
     | Character Char
     deriving (Show, Eq, Ord)
@@ -28,7 +27,6 @@ data Expr
     | Lit Literal
     | If Expr Expr Expr
     | Fix Expr
-    | DataC Name
     | Infix Name Expr Expr
     | Postfix Name Expr
     | Prefix Name Expr
@@ -93,7 +91,8 @@ newtype TypeVar = TVar Name
 data Type =
     TypeVar TypeVar             |
     TypeConstant Name           |
-    TypeArrow Type Type         
+    TypeArrow Type Type         |
+    NoType
     deriving (Show, Eq, Ord)
 data Scheme =
     Forall [TypeVar] Type

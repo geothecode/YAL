@@ -1,0 +1,7 @@
+data Bool = True | False
+
+x = 40
+
+eq :: forall. a -> a -> Bool
+
+if True then 40 else if 2 `eq` 3 then 5 else 10
