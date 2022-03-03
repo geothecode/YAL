@@ -512,19 +512,28 @@ pType = lexeme $ do
 
 -- | TODO: Data types, but really not
 
+pDataNode :: Name -> Parser (Name, Scheme)
+pDataNode base = do
+    n <- pDataName
+    args <- optional $ pDataName `sepBy` spaces
+    case args of
+        Nothing -> return (n, Forall [] (TypeConstant base))
+        Just a -> return (n, Forall [] (foldr ((:->) . TypeConstant) (TypeConstant base) a))
+
+-- TODO: pattern matching
 pDataDecl :: Parser Expr
 pDataDecl = do
     keyword "data"
     n <- pDataName
     cs' <- optional $ do
         symbol "="
-        pDataName `sepBy1` symbol "|"
+        pDataNode n `sepBy1` symbol "|"
     let cs = case cs' of
             Nothing -> []
             Just a -> a
     let d = Data n cs
     PE{..} <- get
-    let t = M.fromList (fmap (\a -> (a, (Forall [] (TypeConstant n)))) cs)
+    let t = M.fromList cs
     put PE{ddata = d:ddata, dtypes = t <> dtypes, ..}
     return (Decl d)
 -- demo of data types, just for defining bool, but it can be expanded thru time

@@ -41,7 +41,7 @@ data Declaration
     | Import [Name] [Quantifier]
     | Module [Name]
     | Const Name Expr
-    | Data Name [Name] -- since we dont have args yet 
+    | Data Name [(Name, Scheme)] -- since we dont have args yet 
     deriving (Show, Eq, Ord)    
 
 -- data Bool <args> = <constructor> <args> [<OR> ...]

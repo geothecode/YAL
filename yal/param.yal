@@ -1,0 +1,7 @@
+##
+ # Parametric Data Structures
+ # Examples
+##
+
+data String = Empty | Succ Char String
+
