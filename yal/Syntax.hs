@@ -7,9 +7,12 @@ module Syntax where
 
 import Data.Text (Text)
 import Data.Set (Set)
+import Data.Map (Map)
 
 type Extensions = Set Extension
 type Name = Text
+
+type Program = [Declaration]
 
 -- | General Syntax
 
@@ -21,26 +24,26 @@ data Literal
 
 data Expr
     = Var Name
+    | Constructor Name
     | App Expr Expr
-    | Lam Name Expr
+    | Lam Pattern Expr
     | Let Name Expr Expr
     | Lit Literal
     | If Expr Expr Expr
     | Fix Expr
     | Infix Name Expr Expr
     | Postfix Name Expr
-    | Pragma Pragma
-    | TypeOf Name Scheme
-    | Decl Declaration
-    | Meta Expr
+
     deriving (Show, Eq, Ord)
 
 data Declaration
     = Op Name I Int
-    | Warning Name
     | Import [Name] [Quantifier]
+    | Pragma Pragma
     | Module [Name]
     | Const Name Expr
+    | TypeOf Name Scheme
+    | Meta Expr
     | Data Name [(Name, Scheme)] -- since we dont have args yet 
     deriving (Show, Eq, Ord)    
 
@@ -61,7 +64,7 @@ data Pragma
 
 data Language
     = Haskell
-    | C
+    | CLang
     deriving (Show, Eq, Ord)
 
 data Extension
@@ -109,4 +112,31 @@ data TypeCheckerError
     | InfiniteType TypeVar Type
     | NotInSignature TypeVar
     | UnboundVariable Name
+    | ShouldHaveArgs Int Int
+    | EndOfType
+    deriving (Show, Eq, Ord)
+
+
+type Env = Map Name Value
+
+data NF
+
+data Value
+    = Lm Env Expr        -- lambda
+    | C Name [Value]    -- constructor
+    | Lt Literal
+    deriving (Show, Eq, Ord)
+data Pattern
+    = WildcardP
+    | DataConstructorP Name [Pattern]
+    | VariableP Name
+    | LiteralP Literal
+    deriving (Show, Eq, Ord)
+
+type Alt = (Pattern, Expr)
+
+
+data MatcherError
+    = NoMatchingPatterns
+    -- | ShouldHaveArgs Name Int Int
     deriving (Show, Eq, Ord)

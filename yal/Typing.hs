@@ -160,8 +160,47 @@ lookupEnv a = do
             return (Just (mempty, t))
         Nothing -> return Nothing
 
-infer :: Expr -> Typer (Subst, Type)
-infer e = do
+sizeT :: Type -> Int
+sizeT (_ :-> b) = 1 + sizeT b
+sizeT _ = 1
+
+fromPattern :: Pattern -> TypeVar
+fromPattern (VariableP name) = TVar name
+
+-- collect' :: Pattern -> Type -> Typer (Subst, Maybe Type)
+-- collect' x (a :-> b) | sizeT b > 1 = do
+--     return (M.singleton (fromPattern x) a, return b)
+-- collect' _  _ = return (mempty, Nothing)
+
+-- collect :: [Pattern] -> Type -> Typer Subst
+-- collect a b | length a >= sizeT b = 
+-- collect [] _ = return mempty
+-- collect _ a | sizeT a == 1 = return mempty
+-- collect (p:ps) t = do
+--     (s1, typ) <- collect' p t
+--     v <- case typ of
+--         Just a -> return a
+--     s2 <- collect ps v
+--     return (s2 <> s1)
+
+facecontrol :: Pattern -> Type -> [(Pattern, Type)]
+facecontrol WildcardP _ = mempty
+facecontrol p t = return (p, t)
+
+toListT :: Type -> [Type]
+toListT (a :-> b) = [a] <> toListT b
+toListT _ = []
+
+collect :: [Pattern] -> Type -> Typer Subst
+collect p t | length p < sizeT t = return (M.fromList (fmap (\(a, b) -> (fromPattern a, b)) (concat (zipWithM facecontrol p (toListT t)))))
+collect p t = throwError (ShouldHaveArgs (sizeT t - 1) (length p))
+
+
+-- TODO:
+-- make local-scope environent in TE to accumulate things line this: data A = A Int; f (A a) = a -- to guess that a :: Int
+
+inferExpr :: Expr -> Typer (Subst, Type)
+inferExpr e = do
     TE{..} <- get
     case e of
         Var a -> do
@@ -170,72 +209,87 @@ infer e = do
                 Just t -> return t
                 Nothing -> throwError (UnboundVariable a)
 
+        Constructor a -> inferExpr (Var a)
+
         Lam a e -> do
             tv <- fresh
-            record (a, Forall [] tv)
-            (s, t) <- infer e
-            return (s, apply s tv :-> t)
-        
+            let n = T.pack (show a)
+            record (n, Forall [] tv)
+            sub <- case a of
+                LiteralP x -> do
+                    (s, t) <- inferExpr (Lit x)
+                    record (n, Forall [] t)
+                    update s
+                    unify t tv
+                DataConstructorP name args -> do
+                    (s, t) <- inferExpr (Var name)
+                    s1 <- collect args t
+                    s2 <- unify t tv
+                    return (s2 <> s1)
+                _ -> return mempty
+            (s, t) <- inferExpr e
+            return (s <> sub, apply (s <> sub) tv :-> t)
+
         Let a l r -> do
-            (s1, t1) <- infer l
+            (s1, t1) <- inferExpr l
             update s1
             t1' <- generalize t1
             record (a, t1')
-            (s2, t2) <- infer r
+            (s2, t2) <- inferExpr r
             return (s2 <> s1, t2) 
 
         App l r -> do
             tv <- fresh
-            (s1, t1) <- infer l
+            (s1, t1) <- inferExpr l
             update s1
-            (s2, t2) <- infer r
+            (s2, t2) <- inferExpr r
             s3 <- unify (apply s2 t1) (t2 :-> tv)
             return (s3 <> s2 <> s1, apply s3 tv)
 
         If a l r -> do
-            (s1, t1) <- infer a
-            (s2, t2) <- infer l
-            (s3, t3) <- infer r
+            (s1, t1) <- inferExpr a
+            (s2, t2) <- inferExpr l
+            (s3, t3) <- inferExpr r
             s4 <- unify t1 tBool
             s5 <- unify t2 t3
             return (s5 <> s4 <> s3 <> s2 <> s1, apply s5 t2)
         
         Fix a -> do
             tv <- fresh
-            (s1, t1) <- infer a
+            (s1, t1) <- inferExpr a
             s2 <- unify (tv :-> tv) t1
             return (s2 <> s1, apply s2 tv)
         
         -- TODO: all type inferences
 
-        Decl (Const a e) -> do
-            tv <- fresh
-            record (a, Forall [] tv)
-            (s1, t1) <- infer e
-            s2 <- unify (apply s1 tv) t1
-            t <- generalize (apply (s2 <> s1) t1)
-            record (a, t)
-            return (s2 <> s1, apply (s2 <> s1) t1)
-        
-        Decl _ -> return (mempty, NoType)
-
-        Meta _ -> return (mempty, tMeta)
-
-        TypeOf a t -> do
-            record (a, t)
-            return (mempty, NoType)
-
-        Pragma _ -> return (mempty, NoType)
-
-        i@(Infix _ _ _) -> infer (fromFixity i)
-        i@(Postfix _ _) -> infer (fromFixity i)
+        i@(Infix _ _ _) -> inferExpr (fromFixity i)
+        i@(Postfix _ _) -> inferExpr (fromFixity i)
 
         Lit (Number _) -> return (mempty, tInt)
         Lit (Character _) -> return (mempty, tChar)
         Lit (Text _) -> return (mempty, tText)
 
+inferDecl :: Declaration -> Typer (Subst, Type)
+inferDecl decl = case decl of
+    Const a e -> do
+            tv <- fresh
+            record (a, Forall [] tv)
+            (s1, t1) <- inferExpr e
+            s2 <- unify (apply s1 tv) t1
+            t <- generalize (apply (s2 <> s1) t1)
+            record (a, t)
+            return (s2 <> s1, apply (s2 <> s1) t1)
+    
+    Meta _ -> return (mempty, tMeta)
+    
+    TypeOf a t -> do
+            record (a, t)
+            return (mempty, NoType)
+
+    _ -> return (mempty, NoType)
+
 inferMany :: [Expr] -> Typer [(Subst, Type)]
-inferMany = mapM infer
+inferMany = mapM inferExpr
 
 normalize :: Scheme -> Typer Scheme
 normalize f@(Forall ts t) = do
@@ -271,3 +325,6 @@ tInt = TypeConstant "Int"
 tChar = TypeConstant "Char"
 tText = TypeConstant "Text"
 tMeta = TypeConstant "Meta"
+
+inferProgram :: Program -> Typer [(Subst, Type)]
+inferProgram = mapM inferDecl

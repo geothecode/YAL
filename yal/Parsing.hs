@@ -22,8 +22,10 @@ import Text.Megaparsec (between)
 import Data.List hiding (insert)
 import Data.Set (Set)
 import qualified Data.Set as S
+-- import Control.Monad.Trans.RWS
 
 import Syntax
+import Syntax (Pattern(LiteralP, DataConstructorP))
 
 type Table a = Map Int [Operator Parser a]
 -- parsing environment
@@ -39,14 +41,8 @@ data PE = PE
     ,   warnings    :: [(Int, Text)] -- TODO: change to Error from Megaparsec
     ,   dtypes      :: Map Name Scheme
     ,   ddata       :: [Declaration] -- since we dont have data args yet we just collect this references
+    ,   declpat     :: Map Name [Pattern]
     }
-
-warn :: Text -> Parser Expr
-warn text = do
-    o <- getOffset
-    PE{warnings, ..} <- get
-    put PE{warnings = (o,text):warnings, ..}
-    return (Decl $ Warning text)
 
 turnOn :: Extension -> Parser ()
 turnOn e = do
@@ -121,8 +117,8 @@ name = do
 pVar :: Parser Expr
 pVar = Var <$> name
 
-pNum :: Parser Expr
-pNum = Lit <$> Number <$> (lexeme $ do 
+pNum :: Parser Literal
+pNum = Number <$> (lexeme $ do 
     n <- optional $ char '-'
     num <- Lexer.decimal
     return $ case n of
@@ -147,6 +143,7 @@ initPE = PE
     ,   warnings    = mempty
     ,   dtypes      = M.empty
     ,   ddata       = mempty
+    ,   declpat     = mempty
     }
 {- @ is used to reference to this particular type-variable -}
 
@@ -169,7 +166,7 @@ insert' :: [(Int, Operator Parser a)] -> Table a -> Table a
 insert' xs ys = foldr insert ys xs
 
 
-pInfix :: Parser Expr
+pInfix :: Parser Declaration
 pInfix = do
     t <- choice 
         [
@@ -202,16 +199,16 @@ pInfix = do
     Var op <- pOp
     PE{btable, ..} <- get
     put (PE{btable = insert (f, binary t op) btable, ..})
-    return (Decl $ Op op t f)
+    return (Op op t f)
 
-pPostfix :: Parser Expr
+pPostfix :: Parser Declaration
 pPostfix = lexeme $ do
     t <- keyword "postfix" $> Post
     f <- return 9 -- mostly TODO:
     Var op <- pOp
     PE{..} <- get
     put (PE{utable = insert (f, unary op) utable, ..})
-    return (Decl $ Op op t f)
+    return (Op op t f)
 
 
 
@@ -220,9 +217,9 @@ bar = lexeme $ char '|'
 
 matchlang :: String -> Language
 matchlang "haskell" = Haskell
-matchlang "c" = C
+matchlang "c" = CLang
 
-pPragma :: Parser Expr
+pPragma :: Parser Declaration
 pPragma = lexeme $ curly $ do
     o <- getOffset
     name <- lexeme $ some letterChar
@@ -261,7 +258,7 @@ argsTo p a = choice
     ,   (<>) <$> (return <$> a) <*> argsTo p a
     ]
 
-construct :: [Text] -> Expr -> Expr
+construct :: [Pattern] -> Expr -> Expr
 construct xs e = foldr Lam e xs
 
 pOp :: Parser Expr
@@ -272,8 +269,8 @@ pOp' = (T.pack <$> lexeme (some (oneOf ("+-$%&^*/?.,~@<>|#=:" :: String))))
 
 pLam :: Parser Expr
 pLam = Lam <$> 
-        ((keyword "lam" <|> symbol "\\") *> name) -- lam x OR \x
-    <*> ((construct <$> argsTo (symbol "->") name) >>= (\a -> a <$> expr)) -- zero or some other args and -> followed by expr
+        ((keyword "lam" <|> symbol "\\") *> pPattern) -- lam x OR \x
+    <*> ((construct <$> argsTo (symbol "->") pPattern) >>= (\a -> a <$> expr)) -- zero or some other args and -> followed by expr
 
 pExtensions :: Parser Extension
 pExtensions = choice
@@ -291,7 +288,7 @@ pExtensions = choice
     ]   <?> "extension"
 
 pLet :: Parser Expr
-pLet = lexeme (Let <$> (keyword "let" *> name) <*> (((construct <$> argsTo (symbol "=") name) >>= (\a -> a <$> expr)) <|> (symbol "=" *> expr)) <*> (keyword "in" *> expr))
+pLet = lexeme (Let <$> (keyword "let" *> name) <*> (((construct <$> argsTo (symbol "=") pPattern) >>= (\a -> a <$> expr)) <|> (symbol "=" *> expr)) <*> (keyword "in" *> expr))
 
 -- TODO: pattern matching and stuff combinators
 -- "c" in name for COMBINATOR
@@ -306,7 +303,7 @@ cIfTurnedOn ext a b = do
 pName :: Parser Text
 pName = lexeme (T.cons <$> (upperChar <|> lowerChar) <*> (T.pack <$> many alphaNumChar))
 
-pImport :: Parser Expr
+pImport :: Parser Declaration
 pImport = lexeme $ do
     keyword "import"
     n <- lexeme (pName `sepBy1` symbol ".") <?> "package name"
@@ -328,10 +325,10 @@ pImport = lexeme $ do
             setOffset o
             fail "Unexpected ',': maybe you meant to use parenthesis instead?"
         return (Hiding ns)
-    return (Decl $ Import n $ concat $ map fromMaybe [qual, fr, hid])
+    return (Import n $ concat $ map fromMaybe [qual, fr, hid])
     -- TODO:
 
-pModule :: Parser Expr
+pModule :: Parser Declaration
 pModule = do
     PE{tmodule, ..} <- get
     case tmodule of
@@ -339,7 +336,7 @@ pModule = do
             keyword "module"
             mod <- Module <$> pName `sepBy1` symbol "." <?> "module name"
             put PE{tmodule = Just mod, ..}
-            return (Decl mod)
+            return mod
         Just a -> do
             fail "module had been already declared"
 
@@ -350,6 +347,15 @@ pFix = Fix <$> lexeme (keyword "fix" *> expr)
 fromMaybe :: (Maybe a) -> [a]
 fromMaybe Nothing = []
 fromMaybe (Just a) = [a]
+
+pLit' :: Parser Literal
+pLit' = choice
+    [
+        pNum
+    ]
+
+pLit :: Parser Expr
+pLit = Lit <$> pLit'
 
 term :: Parser Expr
 term =
@@ -364,16 +370,16 @@ term =
         ,   pLet
         ,   pVar
         ,   pDataConstructor
-        ,   pNum
+        ,   pLit
         ]
 
-top :: Parser Expr
-top = 
+decl :: Parser Declaration
+decl = 
     choice
         [
             try pInfixDecl
         ,   try pDataDecl
-        ,   try pDecl
+        ,   try pConst
         ,   try pType
         ,   pModule
         ,   pImport
@@ -396,7 +402,7 @@ expr :: Parser Expr
 expr = lexeme $ do
     optional spaces
     e <- get
-    makeExprParser (top <|> try pApp <|> term) (flat $ utable e <> btable e) -- WORKS!!!!!
+    makeExprParser (try pApp <|> term) (flat $ utable e <> btable e) -- WORKS!!!!!
 
 test :: Show a => Parser a -> Text -> IO ()
 test p t = case evalState (runParserT p "<input>" t) initPE of
@@ -414,21 +420,51 @@ testIO = do
                     "t" -> show . dtypes
             (_, pe@PE{..}) <- exec pSource <$> (putStr "expr> " >> T.pack <$> getLine)
             putStrLn (mov pe) >> testIO
-        _ -> test (fst <$> pSource) (T.pack line) >> testIO
+        _ -> test (fst <$> pSource') (T.pack line) >> testIO
 
 -- Top-Level Parsers
 
 ticks :: Parser a -> Parser a
 ticks = between (symbol "`") (symbol "`")
 
-pDecl :: Parser Expr
-pDecl = Decl <$> (Const <$> (parens pOp' <|> name) <*> (((construct <$> argsTo (symbol "=") name) >>= (\a -> a <$> expr)) <|> (symbol "=" *> expr)))
+pConst :: Parser Declaration
+pConst = do
+    n <- (parens pOp' <|> name)
+    o <- getOffset
+    (e, p) <- do
+        pat <- argsTo (symbol "=") pPattern
+        exp <- expr
+        return ((construct pat $ exp), pat)
+    PE{..} <- get
+    put PE{declpat = M.insertWith (<>) n p declpat, ..}
+    return (Const n e)
 
-pInfixDecl :: Parser Expr
-pInfixDecl = Decl <$> do
-    l <- name
+pPattern :: Parser Pattern
+pPattern = lexeme $ choice
+    [
+            pDataSolo
+        ,   pDataPattern
+        ,   keyword "_" $> WildcardP
+        ,   VariableP <$> name
+        ,   LiteralP <$> pLit'
+    ]
+
+pDataSolo :: Parser Pattern
+pDataSolo = do
+    name <- pDataName
+    return (DataConstructorP name mempty)
+
+pDataPattern :: Parser Pattern
+pDataPattern = parens (do
+    name <- pDataName
+    args <- pPattern `sepBy` spaces
+    return (DataConstructorP name args))
+
+pInfixDecl :: Parser Declaration
+pInfixDecl = do
+    l <- pPattern
     op <- (pOp' <|> ticks name)
-    r <- name
+    r <- pPattern
     symbol "="
     e <- expr
     return (Const op (Lam l (Lam r e)))
@@ -440,7 +476,7 @@ pApp = lexeme $
     <*> some term
     <* notFollowedBy 
            ((choice (keyword <$> kwrds))
-        <|> (pDecl $> T.empty) 
+        <|> (pConst $> T.empty) 
         <|> (pType $> T.empty))
 
 pIf :: Parser Expr
@@ -457,7 +493,7 @@ pDataName :: Parser Text
 pDataName = lexeme (T.cons <$> upperChar <*> (T.pack <$> many alphaNumChar))
 
 pDataConstructor :: Parser Expr
-pDataConstructor = Var <$> pDataName
+pDataConstructor = Constructor <$> pDataName
 
 -- | Types
 
@@ -486,7 +522,7 @@ pTypeExpr = do
     e <- get
     makeExprParser pTypeE (flat (typetable e)) -- WORKS!!!!!
 
-pType :: Parser Expr
+pType :: Parser Declaration
 pType = lexeme $ do
     n <- (name <|> parens pOp')
     symbol "::"
@@ -521,7 +557,7 @@ pDataNode base = do
         Just a -> return (n, Forall [] (foldr ((:->) . TypeConstant) (TypeConstant base) a))
 
 -- TODO: pattern matching
-pDataDecl :: Parser Expr
+pDataDecl :: Parser Declaration 
 pDataDecl = do
     keyword "data"
     n <- pDataName
@@ -535,15 +571,18 @@ pDataDecl = do
     PE{..} <- get
     let t = M.fromList cs
     put PE{ddata = d:ddata, dtypes = t <> dtypes, ..}
-    return (Decl d)
+    return d
 -- demo of data types, just for defining bool, but it can be expanded thru time
 
 -- | Testing
 
 exec p t = runState (runParserT p "input" t) initPE
 
-pSource :: Parser ([Expr], PE)
-pSource = do
-    e <- some expr
+pSource' :: Parser ([Declaration], PE)
+pSource' = do
+    e <- some decl
     PE{..} <- get
     return (e, PE{..})
+
+pSource :: Parser Program
+pSource = spaces *> some decl
