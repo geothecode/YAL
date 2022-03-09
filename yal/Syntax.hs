@@ -113,6 +113,7 @@ data TypeCheckerError
     | NotInSignature TypeVar
     | UnboundVariable Name
     | ShouldHaveArgs Int Int
+    | MultipleDeclaration Name
     | EndOfType
     deriving (Show, Eq, Ord)
 

@@ -42,6 +42,10 @@ data TE
     ,   tenv :: Types
     ,   text :: Extensions
     ,   tdat :: [Declaration]
+    ,   locl :: Types
+    ,   ltyp :: Type
+    ,   lpos :: Int
+    ,   uvar :: Set Name
     -- ,   tcon :: Map Name Type
     }
     deriving (Show, Eq, Ord)
@@ -53,6 +57,10 @@ initTE = TE
     ,   tenv = M.empty
     ,   text = S.empty
     ,   tdat = mempty
+    ,   locl = M.empty
+    ,   ltyp = NoType
+    ,   lpos = 0
+    ,   uvar = S.empty
     -- ,   tcon = M.empty
             --     M.insert "Nat"      (TypeConstant "Nat")    -- 1..
             -- $   M.insert "Int"      (TypeConstant "Int")    -- typical integer
@@ -77,6 +85,26 @@ record a = do
 
 update :: Subst -> Typer ()
 update s = modify (apply s)
+
+extendl :: Types -> Typer ()
+extendl s = do
+    TE{..} <- get
+    put TE{locl = s <> locl, ..}
+
+inscope :: Type -> Typer ()
+inscope t = do
+    TE{..} <- get
+    put TE{ltyp = t, lpos = 0, ..}
+
+lnext :: Typer ()
+lnext = do 
+    TE{..} <- get
+    put TE{lpos = lpos + 1, ..}
+
+clearl :: Typer ()
+clearl = do
+    TE{..} <- get
+    put TE{locl = M.empty, ltyp = NoType, lpos = 0, ..}
 
 letters :: [Name]
 letters = T.pack <$> ([1..] >>= flip replicateM ['a'..'z'])
@@ -151,10 +179,10 @@ generalize t = do
     let ts = S.toList (S.difference (free t) (free te))
     return (Forall ts t)
 
-lookupEnv :: Name -> Typer (Maybe (Subst, Type))
-lookupEnv a = do
+lookupEnv :: Name -> Types -> Typer (Maybe (Subst, Type))
+lookupEnv a t = do
     TE{..} <- get
-    case M.lookup a tenv of
+    case M.lookup a t of
         Just sc -> do
             t <- instantiate sc
             return (Just (mempty, t))
@@ -164,8 +192,8 @@ sizeT :: Type -> Int
 sizeT (_ :-> b) = 1 + sizeT b
 sizeT _ = 1
 
-fromPattern :: Pattern -> TypeVar
-fromPattern (VariableP name) = TVar name
+-- fromPattern :: Pattern -> Name
+-- fromPattern (VariableP name) = name
 
 -- collect' :: Pattern -> Type -> Typer (Subst, Maybe Type)
 -- collect' x (a :-> b) | sizeT b > 1 = do
@@ -183,52 +211,120 @@ fromPattern (VariableP name) = TVar name
 --     s2 <- collect ps v
 --     return (s2 <> s1)
 
-facecontrol :: Pattern -> Type -> [(Pattern, Type)]
-facecontrol WildcardP _ = mempty
-facecontrol p t = return (p, t)
+facecontrol :: Pattern -> Typer Types
+facecontrol WildcardP = lnext >> return mempty
+facecontrol LiteralP{} = lnext >> return mempty
+facecontrol (DataConstructorP _ []) = lnext >> return mempty
+facecontrol (DataConstructorP n args) = do
+        oldt <- gets ltyp
+        (_, t) <- inferExpr (Var n)
+        inscope t
+        let 
+            has  = length args
+            need = sizeT t - 1
+        if has == need 
+            then (mapM facecontrol args) >> inscope oldt >> return mempty
+            else throwError (ShouldHaveArgs need has)
+facecontrol (VariableP n) = do
+    checkThenAdd n
+    t <- gets ltyp
+    p <- gets lpos
+    sc <- generalize (thead (toListT t !! p))
+    lnext
+    extendl (M.singleton n sc)
+    return mempty
+
+
+
+checkThenAdd :: Name -> Typer ()
+checkThenAdd name = do
+    TE{..} <- get
+    if name `S.member` uvar
+        then throwError (MultipleDeclaration name)
+        else put TE{uvar = name `S.insert` uvar, ..} 
 
 toListT :: Type -> [Type]
 toListT (a :-> b) = [a] <> toListT b
 toListT _ = []
 
-collect :: [Pattern] -> Type -> Typer Subst
-collect p t | length p < sizeT t = return (M.fromList (fmap (\(a, b) -> (fromPattern a, b)) (concat (zipWithM facecontrol p (toListT t)))))
-collect p t = throwError (ShouldHaveArgs (sizeT t - 1) (length p))
-
+collect :: [Pattern] -> Typer Types
+collect p = (mapM facecontrol p) >> return mempty -- TODO:
 
 -- TODO:
 -- make local-scope environent in TE to accumulate things line this: data A = A Int; f (A a) = a -- to guess that a :: Int
+
+-- lookupLocl :: Name -> Typer (Maybe (Subst, Type))
+-- lookupLocl a = do
+--     TE{..} <- get
+--     case M.lookup a locl of
+--         Just t -> do
+--             t1 <- generalize t
+--             return (Just (mempty, t1))
+--         Nothing -> return Nothing
+
+domain :: Type -> Type
+domain (_ :-> a) = domain a
+domain t@TypeVar{} = t
+domain t@TypeConstant{} = t
+
+thead :: Type -> Type
+thead (a :-> _) = a
+thead a = a
+
 
 inferExpr :: Expr -> Typer (Subst, Type)
 inferExpr e = do
     TE{..} <- get
     case e of
         Var a -> do
-            r <- lookupEnv a
+            r <- lookupEnv a tenv
             case r of
                 Just t -> return t
-                Nothing -> throwError (UnboundVariable a)
+                Nothing -> do
+                    l <- lookupEnv a locl
+                    case l of
+                        Just t -> return t
+                        Nothing -> throwError (UnboundVariable a)
 
         Constructor a -> inferExpr (Var a)
 
         Lam a e -> do
             tv <- fresh
-            let n = T.pack (show a)
-            record (n, Forall [] tv)
-            sub <- case a of
-                LiteralP x -> do
-                    (s, t) <- inferExpr (Lit x)
-                    record (n, Forall [] t)
-                    update s
-                    unify t tv
-                DataConstructorP name args -> do
-                    (s, t) <- inferExpr (Var name)
-                    s1 <- collect args t
-                    s2 <- unify t tv
-                    return (s2 <> s1)
-                _ -> return mempty
-            (s, t) <- inferExpr e
-            return (s <> sub, apply (s <> sub) tv :-> t)
+            case a of
+                VariableP n -> do
+                    record (n, Forall [] tv)
+                    (s, t) <- inferExpr e
+                    return (s, apply s tv :-> t)
+                LiteralP n -> do
+                    (_, lt) <- inferExpr (Lit n)
+                    (s, t) <- inferExpr e
+                    return (s, lt :-> t)
+                WildcardP -> do
+                    (s, t) <- inferExpr e
+                    return (s, tv :-> t)
+                d@(DataConstructorP name _) -> do
+                    facecontrol d
+                    (_, nt) <- inferExpr (Var name)
+                    inscope nt
+                    (s, t) <- inferExpr e
+                    clearl
+                    return (s, domain nt :-> t)
+                -- LiteralP x -> do
+                --     (s, t) <- inferExpr (Lit x)
+                --     record (n, Forall [] t)
+                --     update s
+                --     unify t tv
+                -- DataConstructorP name args -> do
+                --     (s, t) <- inferExpr (Var name)
+                --     s1 <- collect args t
+                --     extendl s1
+                --     s2 <- unify t tv
+                --     return s2
+                -- _ -> return mempty
+            -- sub <- fromPattern a
+            -- (s, t) <- inferExpr e
+            
+            -- return (s, apply (s <> sub) tv :-> t)
 
         Let a l r -> do
             (s1, t1) <- inferExpr l

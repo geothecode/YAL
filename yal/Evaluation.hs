@@ -30,7 +30,7 @@ eval :: T.Text -> IO ()
 eval t = case exec pSource t of
         (Right e, pe) -> 
             case runState (runExceptT (inferProgram e)) (fromPE pe initTE) of
-                (Right t ,_) -> print t
+                (Right t ,_) -> print (filter ((/= NoType) . snd) t)
                 (Left e, _) -> print e
 
 data EE

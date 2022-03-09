@@ -5,5 +5,7 @@
 
 data String = Empty | Succ Char String
 
-head :: String -> Char
+-- head :: String -> Char
 head (Succ a _) = a
+
+tail (Succ _ s) = s
