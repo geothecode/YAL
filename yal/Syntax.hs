@@ -78,6 +78,7 @@ data Extension
     | PatternMatching -- pretty small amount but
     | PostfixOperators
     | PackageImports
+    | ParitalLaziness
     | None
     deriving (Show, Eq, Ord)
 
@@ -107,7 +108,7 @@ pattern (:->) a b <- (a `TypeArrow` b)
 
 -- | Errors
 
-data TypeCheckerError
+data Error
     = UnificationFail Type Type
     | InfiniteType TypeVar Type
     | NotInSignature TypeVar
@@ -115,29 +116,23 @@ data TypeCheckerError
     | ShouldHaveArgs Int Int
     | MultipleDeclaration Name
     | EndOfType
+    | NoMatchingPatterns
+    | NoSuchVariable Name
     deriving (Show, Eq, Ord)
 
+-- | Values
 
 type Env = Map Name Value
 
-data NF
-
 data Value
-    = Lm Env Expr        -- lambda
-    | C Name [Value]    -- constructor
-    | Lt Literal
+    = LamV Env Expr        -- lambda
+    | ConV Name [Value]    -- constructor
+    | LitV Literal
     deriving (Show, Eq, Ord)
+
 data Pattern
     = WildcardP
     | DataConstructorP Name [Pattern]
     | VariableP Name
     | LiteralP Literal
-    deriving (Show, Eq, Ord)
-
-type Alt = (Pattern, Expr)
-
-
-data MatcherError
-    = NoMatchingPatterns
-    -- | ShouldHaveArgs Name Int Int
     deriving (Show, Eq, Ord)

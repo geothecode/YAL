@@ -9,24 +9,27 @@ import Data.Map (Map)
 import qualified Data.Map as M
 
 
-type Matcher = ExceptT MatcherError (State Env) Bool
+type Matcher = ExceptT Error (State Env) Bool
+
+initEnv :: Env
+initEnv = M.empty
 
 -- NF stands for normal form
 
-match :: (Pattern, Value) -> Matcher
-match (p, v) = case p of
+match :: Pattern -> Value -> Matcher
+match p v = case p of
     WildcardP -> return True
     
     DataConstructorP
         name args -> case v of
-            C name' args' -> if name == name' 
+            ConV name' args' -> if name == name' 
                 then do
                     let 
-                        l1 = (length args)
-                        l2 = (length args')
-                    if l1 == l2
-                        then and <$> mapM match (zip args args')
-                    else throwError (ShouldHaveArgs name l2 l1)
+                        has = (length args')
+                        need = (length args)
+                    if need == has
+                        then and <$> (zipWithM match args args')
+                    else throwError (ShouldHaveArgs has need)
                 else return False
             _ -> return False
     
@@ -35,6 +38,9 @@ match (p, v) = case p of
         return True
     
     LiteralP lit -> case v of
-        Lt lit' -> return (lit == lit')
+        LitV lit' -> return (lit == lit')
 
         _ -> return False
+
+runMatcher :: Matcher -> (Either Error Bool, Env)
+runMatcher m = runState (runExceptT m) initEnv

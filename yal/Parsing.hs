@@ -267,10 +267,26 @@ pOp = Var <$> (T.pack <$> lexeme (some (oneOf ("+-$%&^*/?.,~@<>|#=:" :: String))
 pOp' :: Parser Text
 pOp' = (T.pack <$> lexeme (some (oneOf ("+-$%&^*/?.,~@<>|#=:" :: String))))
 
-pLam :: Parser Expr
-pLam = Lam <$> 
+pLamP :: Parser Expr
+pLamP = Lam <$> 
         ((keyword "lam" <|> symbol "\\") *> pPattern) -- lam x OR \x
     <*> ((construct <$> argsTo (symbol "->") pPattern) >>= (\a -> a <$> expr)) -- zero or some other args and -> followed by expr
+
+pLam :: Parser Expr
+pLam = Lam <$> 
+        ((keyword "lam" <|> symbol "\\") *> pLamName) -- lam x OR \x
+    <*> ((construct <$> argsTo (symbol "->") pLamName) >>= (\a -> a <$> expr)) -- zero or some other args and -> followed by expr
+
+pLamName :: Parser Pattern
+pLamName = do
+    o <- getOffset
+    n <- optional (VariableP <$> (name <|> parens name))
+    case n of
+        Just p -> return p
+        Nothing -> do
+            setOffset o
+            fail "maybe you meant to use PatternMatching instead?"
+
 
 pExtensions :: Parser Extension
 pExtensions = choice
@@ -364,9 +380,8 @@ term =
             try (parens pOp)
         ,   parens expr
         ,   pFix
-        -- ,   cIfTurnedOn PatternMatching pPLam pLam -- for example
         ,   pIf
-        ,   pLam
+        ,   cIfTurnedOn PatternMatching pLamP pLam
         ,   pLet
         ,   pVar
         ,   pDataConstructor
@@ -379,7 +394,7 @@ decl =
         [
             try pInfixDecl
         ,   try pDataDecl
-        ,   try pConst
+        ,   cIfTurnedOn PatternMatching (try pConstP) (try pConst)
         ,   try pType
         ,   pModule
         ,   pImport
@@ -427,12 +442,24 @@ testIO = do
 ticks :: Parser a -> Parser a
 ticks = between (symbol "`") (symbol "`")
 
+pConstP :: Parser Declaration
+pConstP = do
+    n <- (parens pOp' <|> name)
+    o <- getOffset
+    (e, p) <- do
+        pat <- argsTo (symbol "=") pPattern
+        exp <- expr
+        return ((construct pat $ exp), pat)
+    PE{..} <- get
+    put PE{declpat = M.insertWith (<>) n p declpat, ..}
+    return (Const n e)
+
 pConst :: Parser Declaration
 pConst = do
     n <- (parens pOp' <|> name)
     o <- getOffset
     (e, p) <- do
-        pat <- argsTo (symbol "=") pPattern
+        pat <- argsTo (symbol "=") pLamName
         exp <- expr
         return ((construct pat $ exp), pat)
     PE{..} <- get
@@ -445,7 +472,7 @@ pPattern = lexeme $ choice
             pDataSolo
         ,   pDataPattern
         ,   keyword "_" $> WildcardP
-        ,   VariableP <$> name
+        ,   VariableP <$> (name <|> parens name)
         ,   LiteralP <$> pLit'
     ]
 
@@ -580,7 +607,7 @@ exec p t = runState (runParserT p "input" t) initPE
 
 pSource' :: Parser ([Declaration], PE)
 pSource' = do
-    e <- some decl
+    e <- some (try (decl <* symbol ";") <|> decl)
     PE{..} <- get
     return (e, PE{..})
 

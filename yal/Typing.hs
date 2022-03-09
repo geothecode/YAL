@@ -23,7 +23,7 @@ import Control.Monad.State
 import Control.Monad.Except
 
 type Typer a
-    = ExceptT TypeCheckerError (State TE) a
+    = ExceptT Error (State TE) a
 
 type Subst
     = Map TypeVar Type
@@ -408,7 +408,7 @@ closeOver a = do
     sc <- generalize (apply s t)
     normalize sc
 
-runInfer :: Typer (Subst, Type) -> Either TypeCheckerError Scheme
+runInfer :: Typer (Subst, Type) -> Either Error Scheme
 runInfer a = evalState (runExceptT (closeOver a)) initTE
 
 fromFixity :: Expr -> Expr
