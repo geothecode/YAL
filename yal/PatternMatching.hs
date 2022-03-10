@@ -29,7 +29,7 @@ match p v = case p of
                         need = (length args)
                     if need == has
                         then and <$> (zipWithM match args args')
-                    else throwError (ShouldHaveArgs has need)
+                        else throwError (ShouldHaveArgs has need)
                 else return False
             _ -> return False
     
@@ -41,6 +41,8 @@ match p v = case p of
         LitV lit' -> return (lit == lit')
 
         _ -> return False
+
+    -- EmptyP -> throwError CannotCallUncallable
 
 runMatcher :: Matcher -> (Either Error Bool, Env)
 runMatcher m = runState (runExceptT m) initEnv

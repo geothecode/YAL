@@ -41,7 +41,8 @@ data PE = PE
     ,   warnings    :: [(Int, Text)] -- TODO: change to Error from Megaparsec
     ,   dtypes      :: Map Name Scheme
     ,   ddata       :: [Declaration] -- since we dont have data args yet we just collect this references
-    ,   declpat     :: Map Name [Pattern]
+    ,   declpat     :: Map Name [Expr]
+    ,   sigs        :: Map Name Scheme
     }
 
 turnOn :: Extension -> Parser ()
@@ -144,6 +145,7 @@ initPE = PE
     ,   dtypes      = M.empty
     ,   ddata       = mempty
     ,   declpat     = mempty
+    ,   sigs        = M.empty
     }
 {- @ is used to reference to this particular type-variable -}
 
@@ -259,6 +261,7 @@ argsTo p a = choice
     ]
 
 construct :: [Pattern] -> Expr -> Expr
+-- construct [] e = Lam EmptyP e
 construct xs e = foldr Lam e xs
 
 pOp :: Parser Expr
@@ -424,6 +427,14 @@ test p t = case evalState (runParserT p "<input>" t) initPE of
     Right x -> print x
     Left e -> putStrLn $ errorBundlePretty e
 
+testEnv :: Text -> IO ()
+testEnv t = case runState (runParserT pSource "<input>" t) initPE of
+    (Right x, pe) -> do
+        print x
+        putStrLn "\nenvironment:"
+        print (declpat pe)
+    (Left e, _) -> putStrLn $ errorBundlePretty e
+
 testIO :: IO ()
 testIO = do
     line@(l:ls) <- getLine
@@ -451,7 +462,7 @@ pConstP = do
         exp <- expr
         return ((construct pat $ exp), pat)
     PE{..} <- get
-    put PE{declpat = M.insertWith (<>) n p declpat, ..}
+    put PE{declpat = M.insertWith (<>) n (return e) declpat, ..}
     return (Const n e)
 
 pConst :: Parser Declaration
@@ -463,7 +474,7 @@ pConst = do
         exp <- expr
         return ((construct pat $ exp), pat)
     PE{..} <- get
-    put PE{declpat = M.insertWith (<>) n p declpat, ..}
+    put PE{declpat = M.insertWith (<>) n (return e) declpat, ..}
     return (Const n e)
 
 pPattern :: Parser Pattern
@@ -555,13 +566,13 @@ pType = lexeme $ do
     symbol "::"
     f <- optional $ pForall
     t <- pTypeExpr
-    PE{dtypes, ..} <- get
+    PE{sigs, ..} <- get
     case f of
         Just fl -> do 
-            put (PE{dtypes = M.singleton n (Forall fl t) <> dtypes, ..})
+            put (PE{sigs = M.singleton n (Forall fl t) <> sigs, ..})
             return (TypeOf n (Forall fl t))
         Nothing -> do
-            put (PE{dtypes = M.singleton n (Forall [] t) <> dtypes, ..})
+            put (PE{sigs = M.singleton n (Forall [] t) <> sigs, ..})
             return (TypeOf n (Forall [] t)) -- TODO: add generalization, when no forall specified [for convenience]
 
 -- typeExpr :: Parser Scheme
@@ -607,7 +618,7 @@ exec p t = runState (runParserT p "input" t) initPE
 
 pSource' :: Parser ([Declaration], PE)
 pSource' = do
-    e <- some (try (decl <* symbol ";") <|> decl)
+    e <- some (decl <* optional (symbol ";"))
     PE{..} <- get
     return (e, PE{..})
 

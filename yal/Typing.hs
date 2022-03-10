@@ -46,6 +46,7 @@ data TE
     ,   ltyp :: Type
     ,   lpos :: Int
     ,   uvar :: Set Name
+    ,   infered :: Types
     -- ,   tcon :: Map Name Type
     }
     deriving (Show, Eq, Ord)
@@ -61,6 +62,7 @@ initTE = TE
     ,   ltyp = NoType
     ,   lpos = 0
     ,   uvar = S.empty
+    ,   infered = M.empty
     -- ,   tcon = M.empty
             --     M.insert "Nat"      (TypeConstant "Nat")    -- 1..
             -- $   M.insert "Int"      (TypeConstant "Int")    -- typical integer
@@ -73,7 +75,10 @@ class Substitutable a where
     free  :: a -> Set TypeVar
 
 fromPE :: PE -> TE -> TE
-fromPE PE{..} TE{..} = foldl extend TE{tdat = ddata, ..} (M.toList dtypes)
+fromPE PE{..} TE{..} = foldl addSig (foldl extend TE{tdat = ddata, ..} (M.toList dtypes)) (M.toList sigs)
+
+addSig :: TE -> (Name, Scheme) -> TE
+addSig TE{..} (n,s) = TE{infered = M.insert n s infered, ..}
 
 extend :: TE -> (Name, Scheme) -> TE
 extend TE{..} (n,s) = TE{tenv = M.insert n s tenv, ..}
@@ -229,7 +234,7 @@ facecontrol (VariableP n) = do
     checkThenAdd n
     t <- gets ltyp
     p <- gets lpos
-    sc <- generalize (thead (toListT t !! p))
+    sc <- generalize (thead (toListT' t !! p))
     lnext
     extendl (M.singleton n sc)
     return mempty
@@ -243,9 +248,9 @@ checkThenAdd name = do
         then throwError (MultipleDeclaration name)
         else put TE{uvar = name `S.insert` uvar, ..} 
 
-toListT :: Type -> [Type]
-toListT (a :-> b) = [a] <> toListT b
-toListT _ = []
+toListT' :: Type -> [Type]
+toListT' (a :-> b) = [a] <> toListT' b
+toListT' _ = []
 
 collect :: [Pattern] -> Typer Types
 collect p = (mapM facecontrol p) >> return mempty -- TODO:
@@ -374,6 +379,7 @@ inferDecl decl = case decl of
             s2 <- unify (apply s1 tv) t1
             t <- generalize (apply (s2 <> s1) t1)
             record (a, t)
+            extendInfered (a, t)
             return (s2 <> s1, apply (s2 <> s1) t1)
     
     Meta _ -> return (mempty, tMeta)
@@ -424,3 +430,51 @@ tMeta = TypeConstant "Meta"
 
 inferProgram :: Program -> Typer [(Subst, Type)]
 inferProgram = mapM inferDecl
+
+extendInfered :: (Name, Scheme) -> Typer ()
+extendInfered (n,s) = do
+    TE{..} <- get
+    case M.lookup n infered of
+        Just t -> do
+            cond1 <- t `equivalentScheme` s
+            if cond1
+                then do
+                    cond2 <- t `mcsc` s
+                    if cond2
+                        then put TE{..}
+                        else put TE{infered = M.insert n s infered, ..}
+                else throwError (TypesMismatch n t s)
+        Nothing -> put TE{infered = M.insert n s infered, ..}
+
+toListT :: Type -> [Type]
+toListT (a :-> b) = toListT a <> toListT b
+toListT a = [a]
+
+equivalentScheme :: Scheme -> Scheme -> Typer Bool
+equivalentScheme (Forall _ a) (Forall _ b) = softpriority a b
+
+softpriority :: Type -> Type -> Typer Bool
+softpriority a b =
+    case (a, b) of
+        (l@TypeArrow{}, r@TypeArrow{}) -> and <$> zipWithM softpriority (toListT l) (toListT r)
+        (TypeVar _, TypeVar _) -> return True -- same thing
+        (TypeVar _, _) -> return True -- specialization
+        (a, t@(TypeVar _)) -> do
+            sub <- unify a t
+            update sub
+            return True -- can't pass because more general
+        (l@TypeConstant{}, r@TypeConstant{}) | l == r -> return True
+        (_, _) -> return False
+
+mcsc :: Scheme -> Scheme -> Typer Bool
+mcsc (Forall _ a) (Forall _ b) = mostCommonType a b
+
+mostCommonType :: Type -> Type -> Typer Bool -- checks whether first argument is the most common type
+mostCommonType a b =
+    case (a, b) of
+        (l@TypeArrow{}, r@TypeArrow{}) -> or <$> zipWithM mostCommonType (toListT l) (toListT r)
+        (TypeVar _, TypeVar _) -> return False -- same thing
+        (TypeVar _, _) -> return False -- specialization
+        (_, TypeVar _) -> return True -- can't pass because more general
+        (l@TypeConstant{}, r@TypeConstant{}) | l == r -> return False
+        (_, _) -> return False

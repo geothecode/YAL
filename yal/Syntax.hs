@@ -118,6 +118,8 @@ data Error
     | EndOfType
     | NoMatchingPatterns
     | NoSuchVariable Name
+    | TypesMismatch Name Scheme Scheme
+    | CannotCallUncallable
     deriving (Show, Eq, Ord)
 
 -- | Values
@@ -125,7 +127,7 @@ data Error
 type Env = Map Name Value
 
 data Value
-    = LamV Env Expr        -- lambda
+    = LamV Env Pattern Expr        -- lambda
     | ConV Name [Value]    -- constructor
     | LitV Literal
     deriving (Show, Eq, Ord)
@@ -135,4 +137,5 @@ data Pattern
     | DataConstructorP Name [Pattern]
     | VariableP Name
     | LiteralP Literal
+    -- | EmptyP
     deriving (Show, Eq, Ord)
