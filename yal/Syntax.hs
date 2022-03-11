@@ -26,22 +26,25 @@ data Expr
     = Var Name
     | Constructor Name
     | App Expr Expr
-    | Lam Pattern Expr
+    | Lam Pattern Expr -- Lam [Pattern] Expr
     | Let Name Expr Expr
     | Lit Literal
     | If Expr Expr Expr
     | Fix Expr
     | Infix Name Expr Expr
     | Postfix Name Expr
+    | Case Expr [Alt]
 
     deriving (Show, Eq, Ord)
+
+type Alt = (Pattern, Expr) -- Alt = ([Pattern], Expr)
 
 data Declaration
     = Op Name I Int
     | Import [Name] [Quantifier]
     | Pragma Pragma
     | Module [Name]
-    | Const Name Expr
+    | Const Name Expr -- Const Name [Pattern] Expr
     | TypeOf Name Scheme
     | Meta Expr
     | Data Name [(Name, Scheme)] -- since we dont have args yet 
@@ -74,11 +77,11 @@ data Extension
     | LinearTypes
     | DependentTypes -- one day probably
     | LazyEvaluation -- one day probably
-    | Wildcards
     | PatternMatching -- pretty small amount but
     | PostfixOperators
     | PackageImports
     | ParitalLaziness
+    | MultiCase
     | None
     deriving (Show, Eq, Ord)
 
@@ -120,6 +123,9 @@ data Error
     | NoSuchVariable Name
     | TypesMismatch Name Scheme Scheme
     | CannotCallUncallable
+    | NoMainFunction
+    | UnknownError
+    | TODO
     deriving (Show, Eq, Ord)
 
 -- | Values
@@ -127,9 +133,10 @@ data Error
 type Env = Map Name Value
 
 data Value
-    = LamV Env Pattern Expr        -- lambda
+    = LamV Env Pattern Value       -- lambda
     | ConV Name [Value]    -- constructor
     | LitV Literal
+    | VarV Name     -- delete it
     deriving (Show, Eq, Ord)
 
 data Pattern

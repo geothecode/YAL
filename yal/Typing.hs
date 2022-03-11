@@ -55,14 +55,14 @@ initTE :: TE
 initTE = TE
     {
         uniq = Unique 0
-    ,   tenv = M.empty
+    ,   tenv = M.insert "undefined" (Forall [TVar "a"] (TypeVar (TVar "a"))) M.empty
     ,   text = S.empty
     ,   tdat = mempty
     ,   locl = M.empty
     ,   ltyp = NoType
     ,   lpos = 0
     ,   uvar = S.empty
-    ,   infered = M.empty
+    ,   infered = M.insert "undefined" (Forall [TVar "a"] (TypeVar (TVar "a"))) M.empty
     -- ,   tcon = M.empty
             --     M.insert "Nat"      (TypeConstant "Nat")    -- 1..
             -- $   M.insert "Int"      (TypeConstant "Int")    -- typical integer

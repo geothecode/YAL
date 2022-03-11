@@ -1,8 +1,5 @@
 x = 2
-infixl 6 +
 
-data Int
+y = x
 
-(+) :: a -> a -> a 
-
-y = lam a -> a + x
+main = y

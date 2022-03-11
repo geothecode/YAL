@@ -1,8 +1,8 @@
-{ext|PatternMatching}
+{ext|patterns}
 
 data List = Nil | Cons Int List
 
-f :: Bool -> Int -- if enabled: typechecker rejects everything below
+-- f :: Bool -> Int -- if enabled: typechecker rejects everything below
 f a = 10
 f 2 = 2 -- narrows the scope of function to just integers
 f b = 5 -- says that b is actually int, but passes!

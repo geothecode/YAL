@@ -57,25 +57,6 @@ turnOff e = do
 
 type Parser = ParsecT Void Text (State PE)
 
-spaces :: Parser ()
-spaces = 
-    Lexer.space
-        space1
-        pLineComment
-        pBlockComment
-
-pLineComment :: Parser ()
-pLineComment = 
-        Lexer.skipLineComment "--"
-    -- <|> Lexer.skipLineComment "/*\\"
-
-pBlockComment :: Parser ()
-pBlockComment = 
-        Lexer.skipBlockComment "##" "##"
-        -- Lexer.skipBlockComment "{-" "-}" 
-
-lexeme :: Parser a -> Parser a
-lexeme = Lexer.lexeme spaces
 
 symbol :: Text -> Parser Text
 symbol = Lexer.symbol spaces
@@ -105,6 +86,8 @@ kwrds =
     ,   "infixr"
     ,   "infix"
     ,   "postfix"
+    ,   "case"
+    ,   "of"
     -- ,   "exists"
     ]
 
@@ -294,11 +277,12 @@ pLamName = do
 pExtensions :: Parser Extension
 pExtensions = choice
     [
-        symbol "PatternMatching" $> PatternMatching
-    ,   (symbol "LowPrecedenceOperators" <|> symbol "LPO") $> LowPrecedenceOperators
-    ,   (symbol "HighPrecedenceOperators" <|> symbol "HPO") $> HighPrecedenceOperators
-    ,   symbol "PostfixOperators" $> PostfixOperators
-    ,   symbol "PackageImports" $> PackageImports
+        symbol "patterns" $> PatternMatching
+    ,   symbol "lowops" $> LowPrecedenceOperators
+    ,   symbol "highops" $> HighPrecedenceOperators
+    ,   symbol "postfix" $> PostfixOperators
+    ,   symbol "packageimports" $> PackageImports
+    ,   symbol "multicase" $> MultiCase
     ,   do
             o <- getOffset
             n <- some letterChar
@@ -376,51 +360,6 @@ pLit' = choice
 pLit :: Parser Expr
 pLit = Lit <$> pLit'
 
-term :: Parser Expr
-term =
-    choice
-        [
-            try (parens pOp)
-        ,   parens expr
-        ,   pFix
-        ,   pIf
-        ,   cIfTurnedOn PatternMatching pLamP pLam
-        ,   pLet
-        ,   pVar
-        ,   pDataConstructor
-        ,   pLit
-        ]
-
-decl :: Parser Declaration
-decl = 
-    choice
-        [
-            try pInfixDecl
-        ,   try pDataDecl
-        ,   cIfTurnedOn PatternMatching (try pConstP) (try pConst)
-        ,   try pType
-        ,   pModule
-        ,   pImport
-        ,   pInfix
-        ,   pPostfix
-        ,   cIfTurnedOn PostfixOperators pPostfix empty
-        ,   pPragma
-        ]
-{-
-    choice
-        [
-            dbg "parens" $ parens expr
-        ,   dbg "infix" $ infixP
-        ,   dbg "var" var
-        ,   dbg "num" num
-        ]
--}
-
-expr :: Parser Expr
-expr = lexeme $ do
-    optional spaces
-    e <- get
-    makeExprParser (try pApp <|> term) (flat $ utable e <> btable e) -- WORKS!!!!!
 
 test :: Show a => Parser a -> Text -> IO ()
 test p t = case evalState (runParserT p "<input>" t) initPE of
@@ -610,15 +549,101 @@ pDataDecl = do
     let t = M.fromList cs
     put PE{ddata = d:ddata, dtypes = t <> dtypes, ..}
     return d
+
+-- | Case
+
+pCaseItem :: Parser (Pattern, Expr)
+pCaseItem = Lexer.lexeme sc $ do
+    pat <- pPattern -- `sepBy1` symbol "," <* symbol "->"
+    symbol "->"
+    exp <- expr
+    return (pat, exp)
+
+pCase :: Parser Expr
+pCase = do
+    keyword "case"
+    e <- expr
+    keyword "of"
+    alts <- Lexer.indentBlock spaces (return (Lexer.IndentMany (Just (mkPos 5)) (return) pCaseItem))
+    return (Case e alts)
+
 -- demo of data types, just for defining bool, but it can be expanded thru time
 
--- | Testing
+-- | Indentation-based parsing
+
+spaces :: Parser ()
+spaces = 
+    Lexer.space
+        space1
+        pLineComment
+        pBlockComment
+
+pLineComment :: Parser ()
+pLineComment = 
+        Lexer.skipLineComment "--"
+    -- <|> Lexer.skipLineComment "/*\\"
+
+pBlockComment :: Parser ()
+pBlockComment = 
+        Lexer.skipBlockComment "##" "##"
+        -- Lexer.skipBlockComment "{-" "-}" 
+
+lexeme :: Parser a -> Parser a
+lexeme = Lexer.lexeme spaces
+
+indentUnit :: Parser ()
+indentUnit = void (some (char ' ' <|> char '\t'))
+
+sc :: Parser ()
+sc = Lexer.space indentUnit pLineComment pBlockComment
+
+-- | Summary
+
+term :: Parser Expr
+term =
+    choice
+        [
+            try (parens pOp)
+        ,   parens expr
+        ,   try pCase
+        ,   pFix
+        ,   pIf
+        ,   cIfTurnedOn PatternMatching pLamP pLam
+        ,   pLet
+        ,   pVar
+        ,   pDataConstructor
+        ,   pLit
+        ]
+
+decl :: Parser Declaration
+decl = 
+    choice
+        [
+            try pInfixDecl
+        ,   try pDataDecl
+        ,   cIfTurnedOn PatternMatching (try pConstP) (try pConst)
+        ,   try pType
+        ,   pModule
+        ,   pImport
+        ,   pInfix
+        ,   pPostfix
+        ,   cIfTurnedOn PostfixOperators pPostfix empty
+        ,   pPragma
+        ]
+
+expr :: Parser Expr
+expr = lexeme $ do
+    optional spaces
+    e <- get
+    (makeExprParser (try pApp <|> term) (flat $ utable e <> btable e))
+
+-- | Final
 
 exec p t = runState (runParserT p "input" t) initPE
 
 pSource' :: Parser ([Declaration], PE)
 pSource' = do
-    e <- some (decl <* optional (symbol ";"))
+    e <- some (optional newline *> decl <* optional (symbol ";"))
     PE{..} <- get
     return (e, PE{..})
 
