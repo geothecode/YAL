@@ -8,7 +8,7 @@
 module Evaluation where
 
 import Parsing
-import Typing
+import Typing hiding (locl)
 import Syntax
 import PatternMatching
 
@@ -34,6 +34,8 @@ data Global
     ,   frompat :: [Name]
     ,   currentname :: Maybe Name
     ,   decls :: Map Name [Expr]
+    ,   locl :: Map Name Value
+    ,   out :: [Value]
     -- ,   main :: Bool -- is there a main function | is it a main module
     }
     deriving (Show, Eq, Ord)
@@ -51,6 +53,8 @@ initGlobal
     ,   frompat = mempty
     ,   currentname = Nothing
     ,   decls = M.empty
+    ,   locl = M.empty
+    ,   out = mempty
     }
 
 checkOccurence :: Name -> Eval ()
@@ -86,12 +90,16 @@ add n v = do
 
 -- TODO
 -- find :: Name -> Eval [Expr]
-find :: Name -> Eval Expr
+find :: Name -> Eval Value
 find name = do
     decls <- gets decls
+    loc <- gets locl
     case M.lookup name decls of
-        Nothing -> throwError (NoSuchVariable name)
-        Just exs -> return (head exs) -- BAD! make an algortihm or something
+        Nothing -> do
+            case M.lookup name loc of
+                Nothing -> throwError (NoSuchVariable name)
+                Just v -> return v
+        Just exs -> evalExpr (head exs) -- BAD! make an algortihm or something
 
 updated :: Name -> [Expr] -> Eval ()
 updated n e = do
@@ -108,25 +116,56 @@ clear = do
     Global{..} <- get
     put Global{frompat = [], ..}
 
+outAdd :: Value -> Eval ()
+outAdd v = do
+    Global{..} <- get
+    put Global{out = out <> return v, ..}
+
+-- | a bit of Pretty
+showValue :: Value -> Text
+showValue v = T.pack $ case v of
+    LitV (Number a) -> show a
+    LitV (Character a) -> show a
+    (ConV "TextCons" (x:xs)) -> "\"" <> show x <> show xs <> "\""
+    (ConV "TextNil" _) -> ""
+    (ConV a _) -> T.unpack a
+
+-- | Main things
+
 evalExpr :: Expr -> Eval Value
 evalExpr e = do
     case e of
+        Var "getln" -> return Input
         App a b -> do
-            ea <- evalExpr a
-            eb <- evalExpr b
-            case ea of
-                LamV env pat v -> do
-                    if env == mempty
-                        then case runMatcher (match pat eb) of
-                            (Right cond, nenv) ->
-                                if cond
-                                    then do
-                                        foldM (flip inlineValue) v (M.toList nenv)
-                                    else throwError NoMatchingPatterns
-                            (Left err, _) -> throwError err
-                        else undefined
-                ConV n xs -> return (ConV n (xs <> [eb]))
-                _ -> throwError TODO
+            case a of
+                Var "print" -> do
+                    eb <- evalExpr b
+                    outAdd eb
+                    return (ConV "IO" [])
+                Var "show" -> do
+                    eb <- evalExpr b
+                    return (LitV (Text (showValue eb)))
+                _ -> do
+                    ea <- evalExpr a
+                    eb <- evalExpr b
+                    case ea of
+                        LamV env pat v -> do
+                            if env == mempty
+                                then case runMatcher (match pat eb) of
+                                    (Right cond, nenv) ->
+                                        if cond
+                                            then do
+                                                foldM (flip inlineValue) v (M.toList nenv)
+                                            else throwError NoMatchingPatterns
+                                    (Left err, _) -> throwError err
+                            else undefined
+                        ConV n xs -> return (ConV n (xs <> [eb]))
+                        _ -> throwError TODO
+        -- Case ...
+        Infix op l r -> do
+            l' <- evalExpr l
+            r' <- evalExpr r
+            return (evalBinary (fromOp op) l' r')
         Lam pat e -> do
             mapM emplace (freenames pat)
             ev <- evalExpr e
@@ -136,14 +175,13 @@ evalExpr e = do
             ns <- gets frompat
             if n `elem` ns
                 then return (VarV n)
-                else do
-                    ex <- find n
-                    v <- evalExpr ex
-                    return v
+                else find n
         Constructor n -> return (ConV n [])
         Let n e1 e2 -> do
-            inl <- inline (n, e1) e2
-            ev <- evalExpr inl
+            e <- evalExpr e1
+            say n e
+            ev <- evalExpr e2
+            clearsay n
             return ev
         Lit l -> return (LitV l)
         If c e1 e2 -> do
@@ -153,11 +191,43 @@ evalExpr e = do
                 else evalExpr e2
         _ -> throwError UnknownError
 
+say :: Name -> Value -> Eval ()
+say n v = do
+    Global{..} <- get
+    put Global{locl = M.insert n v locl, ..}
+
+clearsay :: Name -> Eval ()
+clearsay n = do
+    Global{..} <- get
+    put Global{locl = M.delete n locl, ..}
+
+fromOp :: Name -> (Value -> Value -> Value)
+fromOp "+" = plusl
+fromOp "-" = minusl
+fromOp "*" = multl
+fromOp "/" = divl
+fromOp ">" = gtl
+fromOp "<" = ltl
+fromOp "==" = eql
+
+evalBinary :: (Value -> Value -> Value) -> Value -> Value -> Value
+evalBinary f a b = (f a b)
+
+plusl (LitV (Number a)) (LitV (Number b)) = LitV (Number (a + b))
+minusl (LitV (Number a)) (LitV (Number b)) = LitV (Number (a - b))
+multl (LitV (Number a)) (LitV (Number b)) = LitV (Number (a * b))
+divl (LitV (Number a)) (LitV (Number b)) = LitV (Number (a `div` b))
+gtl a b = (ConV (T.pack $ show (a > b)) [])
+ltl a b = (ConV (T.pack $ show (a < b)) [])
+eql a b = (ConV (T.pack $ show (a == b)) [])
+
 freenames :: Pattern -> [Name]
 freenames (VariableP n) = [n]
 freenames (DataConstructorP _ pats) = concat (fmap freenames pats)
 freenames _ = []
 
+
+-- deprecated
 inline :: (Name, Expr) -> Expr -> Eval Expr
 inline (n, e1) e2 = do
     case e2 of
@@ -249,10 +319,13 @@ eve l =
 evp :: Text -> IO ()
 evp l = 
     case exec pSource l of
-        (Right _, pe) ->
-            case runEval pe evalProgram of
-                (Right a, _) -> print a
+        (Right ast, pe) ->
+            case runState (runExceptT (inferProgram ast)) (fromPE pe initTE) of
                 (Left err, _) -> print err
+                (Right _, _) -> do
+                    case runEval pe evalProgram of
+                        (Right a, _) -> print a
+                        (Left err, _) -> print err
         (Left err, _) -> putStrLn (errorBundlePretty err)
 {-
 Summary:
@@ -261,4 +334,8 @@ i need to write right rule for inlining Variables (check TODOs)
 
 i need to write the evaluator of declarations
 
+i need to add the typechecker utility to evaluation
+
 -}
+
+-- evaluate :: Text -> 

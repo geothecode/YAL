@@ -31,7 +31,7 @@ type Subst
 type Types -- parser collects info about parsed typesignatures (dtypes)
     = Map Name Scheme
 
-data Unique
+newtype Unique
     = Unique { counter :: Int }
     deriving (Show, Eq, Ord)
 
@@ -51,18 +51,21 @@ data TE
     }
     deriving (Show, Eq, Ord)
 
+deftyps :: Types
+deftyps = M.insert "print" (Forall [TVar "a"] ((TypeVar (TVar "a")) :-> TypeConstant "IO")) $ M.singleton "undefined" (Forall [TVar "a"] (TypeVar (TVar "a")))
+
 initTE :: TE
 initTE = TE
     {
         uniq = Unique 0
-    ,   tenv = M.insert "undefined" (Forall [TVar "a"] (TypeVar (TVar "a"))) M.empty
+    ,   tenv = deftyps
     ,   text = S.empty
     ,   tdat = mempty
     ,   locl = M.empty
     ,   ltyp = NoType
     ,   lpos = 0
     ,   uvar = S.empty
-    ,   infered = M.insert "undefined" (Forall [TVar "a"] (TypeVar (TVar "a"))) M.empty
+    ,   infered = deftyps
     -- ,   tcon = M.empty
             --     M.insert "Nat"      (TypeConstant "Nat")    -- 1..
             -- $   M.insert "Int"      (TypeConstant "Int")    -- typical integer

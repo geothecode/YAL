@@ -351,16 +351,6 @@ fromMaybe :: (Maybe a) -> [a]
 fromMaybe Nothing = []
 fromMaybe (Just a) = [a]
 
-pLit' :: Parser Literal
-pLit' = choice
-    [
-        pNum
-    ]
-
-pLit :: Parser Expr
-pLit = Lit <$> pLit'
-
-
 test :: Show a => Parser a -> Text -> IO ()
 test p t = case evalState (runParserT p "<input>" t) initPE of
     Right x -> print x
@@ -606,6 +596,7 @@ term =
             try (parens pOp)
         ,   parens expr
         ,   try pCase
+        ,   try pText
         ,   pFix
         ,   pIf
         ,   cIfTurnedOn PatternMatching pLamP pLam
@@ -631,6 +622,33 @@ decl =
         ,   pPragma
         ]
 
+pLit' :: Parser Literal
+pLit' = choice
+    [
+        pNum
+    ,   pChar
+    ]
+
+characters :: [Char]
+characters = ['a'..'z'] <> ['A'..'Z'] <> ['0'..'9'] <> "!@#$%^&*()_-+=[]{}~`|/?.,<>:; "
+
+escapedchars :: [Char]
+escapedchars = "\'\"\n\r\a"
+
+pChar' :: Parser Char
+pChar' = oneOf characters
+
+pChar :: Parser Literal
+pChar = Character <$> lexeme (between (char '\'') (char '\'') (oneOf characters))
+
+pLit :: Parser Expr
+pLit = Lit <$> pLit'
+
+pText :: Parser Expr
+pText = do
+    tx <- lexeme (between "\"" "\"" (many pChar'))
+    return (foldr (\a e -> App (App (Constructor "TextCons") (Lit (Character a))) e) (Constructor "TextNil") tx)
+
 expr :: Parser Expr
 expr = lexeme $ do
     optional spaces
@@ -648,4 +666,4 @@ pSource' = do
     return (e, PE{..})
 
 pSource :: Parser Program
-pSource = spaces *> some decl
+pSource = spaces *> some (decl <* optional (symbol ";"))

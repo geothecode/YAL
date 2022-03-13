@@ -1,5 +1,36 @@
-x = 2
+{ext|patterns}
+module test
 
-y = x
+data Bool = True | False
 
-main = y
+data IO
+data Int
+data Char
+data Text
+
+data Text = TextCons Char Text | TextNil
+
+infixl 6 +
+(+) :: Int -> Int -> Int
+infixl 6 -
+(-) :: Int -> Int -> Int
+infixl 7 *
+(*) :: Int -> Int -> Int
+infixl 7 /
+(/) :: Int -> Int -> Int
+infix 4 >
+(>) :: forall a. a -> a -> Bool
+infix 4 <
+(<) :: forall a. a -> a -> Bool
+infix 4 ==
+(==) :: forall a. a -> a -> Bool
+
+x = 3
+-- y a = if a < 0 then 5 + (y (a - 1)) else 0
+
+headText :: Text -> Char
+headText (TextCons a _) = a
+
+main :: IO
+-- main = headText (pure getln)
+main = headText "i love haskell!" -- works

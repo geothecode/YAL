@@ -134,9 +134,11 @@ type Env = Map Name Value
 
 data Value
     = LamV Env Pattern Value       -- lambda
+    | LamCaseV [Alt] 
     | ConV Name [Value]    -- constructor
     | LitV Literal
-    | VarV Name     -- delete it
+    | VarV Name   -- delete it
+    | Input
     deriving (Show, Eq, Ord)
 
 data Pattern
