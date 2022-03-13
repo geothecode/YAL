@@ -1,7 +1,0 @@
-data Bool = True | False
-
-x = 40
-
-(==) :: forall. a -> a -> Bool
-
-if True then 40 else if 2 == 3 then 5 else 10
