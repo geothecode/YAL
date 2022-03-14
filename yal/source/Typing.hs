@@ -1,8 +1,6 @@
 {-#
     LANGUAGE
-        OverloadedStrings,
-        RecordWildCards,
-        NamedFieldPuns
+        OverloadedStrings
 #-}
 
 module Typing where
@@ -78,13 +76,13 @@ class Substitutable a where
     free  :: a -> Set TypeVar
 
 fromPE :: PE -> TE -> TE
-fromPE PE{..} TE{..} = foldl addSig (foldl extend TE{tdat = ddata, ..} (M.toList dtypes)) (M.toList sigs)
+fromPE pe te = foldl addSig (foldl extend (te {tdat = ddata pe}) (M.toList (dtypes pe))) (M.toList (sigs pe))
 
 addSig :: TE -> (Name, Scheme) -> TE
-addSig TE{..} (n,s) = TE{infered = M.insert n s infered, ..}
+addSig te (n,s) = te {infered = M.insert n s (infered te)}
 
 extend :: TE -> (Name, Scheme) -> TE
-extend TE{..} (n,s) = TE{tenv = M.insert n s tenv, ..}
+extend te (n,s) = te {tenv = M.insert n s (tenv te)}
 
 record :: (Name, Scheme) -> Typer ()
 record a = do
@@ -96,23 +94,23 @@ update s = modify (apply s)
 
 extendl :: Types -> Typer ()
 extendl s = do
-    TE{..} <- get
-    put TE{locl = s <> locl, ..}
+    te <- get
+    put (te {locl = s <> locl te})
 
 inscope :: Type -> Typer ()
 inscope t = do
-    TE{..} <- get
-    put TE{ltyp = t, lpos = 0, ..}
+    te <- get
+    put (te {ltyp = t, lpos = 0})
 
 lnext :: Typer ()
 lnext = do 
-    TE{..} <- get
-    put TE{lpos = lpos + 1, ..}
+    te <- get
+    put (te {lpos = (lpos te) + 1})
 
 clearl :: Typer ()
 clearl = do
-    TE{..} <- get
-    put TE{locl = M.empty, ltyp = NoType, lpos = 0, ..}
+    te <- get
+    put (te {locl = M.empty, ltyp = NoType, lpos = 0})
 
 letters :: [Name]
 letters = T.pack <$> ([1..] >>= flip replicateM ['a'..'z'])
@@ -142,14 +140,15 @@ instance Substitutable a =>
         free = foldr (S.union . free) mempty
 
 instance Substitutable TE where
-    apply s TE{..} = TE{tenv = apply s <$> tenv, ..}
+    apply s te = te {tenv = apply s <$> tenv te}
 
-    free TE{..} = free (M.elems tenv)
+    free te = free (M.elems (tenv te))
 
 uGet :: Typer Int
 uGet = do
-    TE{uniq = Unique a, ..} <- get
-    put TE{uniq = Unique (a + 1), ..}
+    te <- get
+    let (Unique a) = uniq te
+    put (te {uniq = Unique (a + 1)})
     return a
 
 fresh :: Typer Type
@@ -189,7 +188,6 @@ generalize t = do
 
 lookupEnv :: Name -> Types -> Typer (Maybe (Subst, Type))
 lookupEnv a t = do
-    TE{..} <- get
     case M.lookup a t of
         Just sc -> do
             t <- instantiate sc
@@ -246,10 +244,10 @@ facecontrol (VariableP n) = do
 
 checkThenAdd :: Name -> Typer ()
 checkThenAdd name = do
-    TE{..} <- get
-    if name `S.member` uvar
+    te <- get
+    if name `S.member` uvar te
         then throwError (MultipleDeclaration name)
-        else put TE{uvar = name `S.insert` uvar, ..} 
+        else put (te {uvar = name `S.insert` uvar te})
 
 toListT' :: Type -> [Type]
 toListT' (a :-> b) = [a] <> toListT' b
@@ -282,14 +280,14 @@ thead a = a
 
 inferExpr :: Expr -> Typer (Subst, Type)
 inferExpr e = do
-    TE{..} <- get
+    te <- get
     case e of
         Var a -> do
-            r <- lookupEnv a tenv
+            r <- lookupEnv a (tenv te)
             case r of
                 Just t -> return t
                 Nothing -> do
-                    l <- lookupEnv a locl
+                    l <- lookupEnv a (locl te)
                     case l of
                         Just t -> return t
                         Nothing -> throwError (UnboundVariable a)
@@ -364,6 +362,9 @@ inferExpr e = do
             s2 <- unify (tv :-> tv) t1
             return (s2 <> s1, apply s2 tv)
         
+        Case e alts -> do
+            throwError TODO
+
         -- TODO: all type inferences
 
         i@(Infix _ _ _) -> inferExpr (fromFixity i)
@@ -436,18 +437,18 @@ inferProgram = mapM inferDecl
 
 extendInfered :: (Name, Scheme) -> Typer ()
 extendInfered (n,s) = do
-    TE{..} <- get
-    case M.lookup n infered of
+    te <- get
+    case M.lookup n (infered te) of
         Just t -> do
             cond1 <- t `equivalentScheme` s
             if cond1
                 then do
                     cond2 <- t `mcsc` s
                     if cond2
-                        then put TE{..}
-                        else put TE{infered = M.insert n s infered, ..}
+                        then put te
+                        else put (te {infered = M.insert n s (infered te)})
                 else throwError (TypesMismatch n t s)
-        Nothing -> put TE{infered = M.insert n s infered, ..}
+        Nothing -> put (te {infered = M.insert n s (infered te)})
 
 toListT :: Type -> [Type]
 toListT (a :-> b) = toListT a <> toListT b

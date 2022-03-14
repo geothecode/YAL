@@ -112,6 +112,8 @@ pattern (:->) a b <- (a `TypeArrow` b)
 -- | Errors
 
 data Error
+
+    -- Typing
     = UnificationFail Type Type
     | InfiniteType TypeVar Type
     | NotInSignature TypeVar
@@ -122,8 +124,13 @@ data Error
     | NoMatchingPatterns
     | NoSuchVariable Name
     | TypesMismatch Name Scheme Scheme
+
+    -- Evaluation
     | CannotCallUncallable
     | NoMainFunction
+    | NotCompletePatterns
+
+    -- Custom
     | UnknownError
     | TODO
     deriving (Show, Eq, Ord)
@@ -133,12 +140,10 @@ data Error
 type Env = Map Name Value
 
 data Value
-    = LamV Env Pattern Value       -- lambda
+    = LamV Env Pattern Expr     -- lambda
     | LamCaseV [Alt] 
-    | ConV Name [Value]    -- constructor
+    | ConV Name [Value]         -- constructor
     | LitV Literal
-    | VarV Name   -- delete it
-    | Input
     deriving (Show, Eq, Ord)
 
 data Pattern

@@ -1,8 +1,6 @@
 {-#
     LANGUAGE
-        OverloadedStrings,
-        RecordWildCards,
-        NamedFieldPuns
+        OverloadedStrings
 #-}
 
 module Evaluation where
@@ -35,13 +33,14 @@ data Global
     ,   currentname :: Maybe Name
     ,   decls :: Map Name [Expr]
     ,   locl :: Map Name Value
+    ,   locle :: Map Name Expr
     ,   out :: [Value]
     -- ,   main :: Bool -- is there a main function | is it a main module
     }
     deriving (Show, Eq, Ord)
 
 fromPEGlobal :: PE -> Global -> Global
-fromPEGlobal PE{..} Global{..} = Global{decls = M.map reverse declpat <> decls, ..}
+fromPEGlobal pe g = g {decls = M.map reverse (declpat pe) <> decls g}
 
 initGlobal :: Global
 initGlobal 
@@ -54,15 +53,16 @@ initGlobal
     ,   currentname = Nothing
     ,   decls = M.empty
     ,   locl = M.empty
+    ,   locle = M.empty
     ,   out = mempty
     }
 
 checkOccurence :: Name -> Eval ()
 checkOccurence name = do
-    Global{..} <- get
-    if name `S.member` names
+    g <- get
+    if name `S.member` names g
         then throwError (MultipleDeclaration name)
-        else put Global{names = name `S.insert` names, ..} 
+        else put (g {names = name `S.insert` names g})
 
 evalIO :: IO ()
 evalIO = do
@@ -85,8 +85,8 @@ evalPure line = do
 
 add :: Name -> Value -> Eval ()
 add n v = do
-    Global{..} <- get
-    put Global{vars = M.insert n v vars, ..}
+    g <- get
+    put (g {vars = M.insert n v (vars g)})
 
 -- TODO
 -- find :: Name -> Eval [Expr]
@@ -103,23 +103,22 @@ find name = do
 
 updated :: Name -> [Expr] -> Eval ()
 updated n e = do
-    Global{..} <- get
-    put Global{decls = M.insertWith (<>) n e decls, ..}
+    g <- get
+    put (g {decls = M.insertWith (<>) n e (decls g)})
 
 emplace :: Name -> Eval ()
 emplace v = do
-    Global{..} <- get
-    put Global{frompat = v:frompat , ..}
+    g <- get
+    put (g {frompat = v:(frompat g)})
 
 clear :: Eval ()
 clear = do
-    Global{..} <- get
-    put Global{frompat = [], ..}
+    g <- get
+    put (g {frompat = []})
 
-outAdd :: Value -> Eval ()
-outAdd v = do
-    Global{..} <- get
-    put Global{out = out <> return v, ..}
+outAdd :: Value -> Global -> Eval ()
+outAdd v g = do
+    put (g {out = out g <> return v})
 
 -- | a bit of Pretty
 showValue :: Value -> Text
@@ -135,12 +134,13 @@ showValue v = T.pack $ case v of
 evalExpr :: Expr -> Eval Value
 evalExpr e = do
     case e of
-        Var "getln" -> return Input
+        -- Var "getln" -> return Input
         App a b -> do
             case a of
                 Var "print" -> do
                     eb <- evalExpr b
-                    outAdd eb
+                    g <- get
+                    outAdd eb g
                     return (ConV "IO" [])
                 Var "show" -> do
                     eb <- evalExpr b
@@ -149,39 +149,42 @@ evalExpr e = do
                     ea <- evalExpr a
                     eb <- evalExpr b
                     case ea of
-                        LamV env pat v -> do
+                        LamV env pat e -> do
                             if env == mempty
                                 then case runMatcher (match pat eb) of
                                     (Right cond, nenv) ->
                                         if cond
                                             then do
-                                                foldM (flip inlineValue) v (M.toList nenv)
+                                                sayVals nenv
+                                                v <- evalExpr e
+                                                mapM clearVal (M.keys nenv)
+                                                return v
+                                                -- foldM (flip inlineValue) v (M.toList nenv)
                                             else throwError NoMatchingPatterns
                                     (Left err, _) -> throwError err
                             else undefined
                         ConV n xs -> return (ConV n (xs <> [eb]))
                         _ -> throwError TODO
-        -- Case ...
+        Case e alts -> firstin e alts
         Infix op l r -> do
             l' <- evalExpr l
             r' <- evalExpr r
             return (evalBinary (fromOp op) l' r')
         Lam pat e -> do
             mapM emplace (freenames pat)
-            ev <- evalExpr e
             clear
-            return (LamV mempty pat ev)
+            return (LamV mempty pat e)
         Var n -> do -- TODO
             ns <- gets frompat
             if n `elem` ns
-                then return (VarV n)
+                then undefined
                 else find n
         Constructor n -> return (ConV n [])
         Let n e1 e2 -> do
             e <- evalExpr e1
-            say n e
+            sayVal n e
             ev <- evalExpr e2
-            clearsay n
+            clearVal n
             return ev
         Lit l -> return (LitV l)
         If c e1 e2 -> do
@@ -191,15 +194,45 @@ evalExpr e = do
                 else evalExpr e2
         _ -> throwError UnknownError
 
-say :: Name -> Value -> Eval ()
-say n v = do
-    Global{..} <- get
-    put Global{locl = M.insert n v locl, ..}
+firstin :: Expr -> [Alt] -> Eval Value
+firstin e [] = throwError NotCompletePatterns
+firstin e ((p,exp):xs) = do
+    val <- evalExpr e
+    case runMatcher (match p val) of
+        (Right cond, nenv) -> do
+            if cond
+                then do
+                    sayVals nenv
+                    v <- evalExpr exp
+                    mapM clearVal (M.keys nenv)
+                    return v
+                else firstin e xs
+        (Left err, _) -> throwError err
 
-clearsay :: Name -> Eval ()
-clearsay n = do
-    Global{..} <- get
-    put Global{locl = M.delete n locl, ..}
+sayExprs :: Map Name Expr -> Eval ()
+sayExprs m = do
+    g <- get
+    put (g {locle = locle g <> m})
+
+clearExprs :: Eval ()
+clearExprs = do
+    g <- get
+    put (g {locle = mempty})
+
+sayVal :: Name -> Value -> Eval ()
+sayVal n v = do
+    g <- get
+    put (g {locl = M.insert n v (locl g)})
+
+sayVals :: Map Name Value -> Eval ()
+sayVals m = do
+    g <- get
+    put (g {locl = locl g <> m})
+
+clearVal :: Name -> Eval ()
+clearVal n = do
+    g <- get
+    put (g {locl = M.delete n (locl g)})
 
 fromOp :: Name -> (Value -> Value -> Value)
 fromOp "+" = plusl
@@ -252,21 +285,21 @@ inline (n, e1) e2 = do
             inl3 <- inline (n, e1) c
             return (If inl1 inl2 inl3)
 
-inlineValue :: (Name, Value) -> Value -> Eval Value
-inlineValue p@(n, e1) e2 = do
-    case e2 of
-        l@LitV{} -> return l
-        LamV env pat val -> do
-            nval <- inlineValue p val
-            nenv <- mapM (inlineValue p) env
-            return (LamV nenv pat nval)
-        ConV name vals -> do
-            nvals <- mapM (inlineValue p) vals
-            return (ConV name nvals)
-        VarV na -> do
-            if na == n
-                then return e1
-                else return e2 
+-- inlineValue :: (Name, Value) -> Value -> Eval Value
+-- inlineValue p@(n, e1) e2 = do
+--     case e2 of
+--         l@LitV{} -> return l
+--         LamV env pat val -> do
+--             nval <- inlineValue p val
+--             nenv <- mapM (inlineValue p) env
+--             return (LamV nenv pat nval)
+--         ConV name vals -> do
+--             nvals <- mapM (inlineValue p) vals
+--             return (ConV name nvals)
+        -- VarV na -> do
+        --     if na == n
+        --         then return e1
+        --         else return e2 
 -- evalProgram :: Program -> Eval Value
 -- evalProgram = undefined
 

@@ -1,0 +1,7 @@
+g a = case a of
+        a -> a
+        y -> case y of
+                2 -> 3 -- WORKS!
+                _ -> y
+
+main = g 3 -- WORKING!!!!!!!

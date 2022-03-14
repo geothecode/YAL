@@ -31,11 +31,11 @@ infix 4 ==
 (==) :: forall a. a -> a -> Bool
 
 x = 3
--- y a = if a < 0 then 5 + (y (a - 1)) else 0
+y a = if a > 0 then 5 + (y (a - 1)) else 0
 
 headText :: Text -> Char
 headText (TextCons a _) = a
 
-main :: IO
+-- main :: IO
 -- main = headText (pure getln)
-main = print (headText "i love haskell!") -- works
+main = (headText "i love haskell!") -- works

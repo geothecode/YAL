@@ -1,8 +1,6 @@
 {-#
     LANGUAGE
         OverloadedStrings,
-        RecordWildCards,
-        NamedFieldPuns,
         PatternSynonyms
 #-}
 module Parsing where
@@ -47,13 +45,13 @@ data PE = PE
 
 turnOn :: Extension -> Parser ()
 turnOn e = do
-    PE{exts, ..} <- get
-    put (PE{exts = S.insert e exts, ..})
+    pe <- get
+    put (pe {exts = S.insert e (exts pe)})
 
 turnOff :: Extension -> Parser ()
 turnOff e = do
-    PE{exts, ..} <- get
-    put (PE{exts = S.delete e exts, ..})
+    pe <- get
+    put (pe {exts = S.delete e (exts pe)})
 
 type Parser = ParsecT Void Text (State PE)
 
@@ -62,7 +60,7 @@ symbol :: Text -> Parser Text
 symbol = Lexer.symbol spaces
 
 keyword :: Text -> Parser Text
-keyword a = lexeme (string a <* notFollowedBy alphaNumChar)
+keyword a = lexeme' (string a <* notFollowedBy alphaNumChar)
 
 kwrds :: [Text]
 kwrds = 
@@ -163,8 +161,8 @@ pInfix = do
         o <- getOffset
         s <- optional $ char '-'
         n <- Lexer.decimal
-        PE{..} <- get -- setting last error offset
-        put PE{lastoffset = o, ..}
+        pe <- get -- setting last error offset
+        put (pe {lastoffset = o})
         case s of
             Just _ -> return (negate n)
             Nothing -> return n
@@ -182,8 +180,8 @@ pInfix = do
                             fail "precedence cannot be lower than 0, maybe you meant LowPrecedenceOperators instead?")
                         else return a
     Var op <- pOp
-    PE{btable, ..} <- get
-    put (PE{btable = insert (f, binary t op) btable, ..})
+    pe <- get
+    put (pe {btable = insert (f, binary t op) (btable pe)})
     return (Op op t f)
 
 pPostfix :: Parser Declaration
@@ -191,8 +189,8 @@ pPostfix = lexeme $ do
     t <- keyword "postfix" $> Post
     f <- return 9 -- mostly TODO:
     Var op <- pOp
-    PE{..} <- get
-    put (PE{utable = insert (f, unary op) utable, ..})
+    pe <- get
+    put (pe {utable = insert (f, unary op) (utable pe)})
     return (Op op t f)
 
 
@@ -221,9 +219,9 @@ pPragma = lexeme $ curly $ do
             fail "opts pragma will be available in futher versions of yal"
         "ext" -> do
             bar
-            PE{exts = e, ..} <- get
+            pe <- get
             exs <- S.fromList <$> pExtensions `sepBy1` symbol ","
-            put PE{exts = S.union e exs, ..}
+            put (pe {exts = S.union (exts pe) exs})
             return (Pragma $ EXT exs)
         "meta" -> do
             bar
@@ -333,12 +331,12 @@ pImport = lexeme $ do
 
 pModule :: Parser Declaration
 pModule = do
-    PE{tmodule, ..} <- get
-    case tmodule of
+    pe <- get
+    case tmodule pe of
         Nothing -> do
             keyword "module"
             mod <- Module <$> pName `sepBy1` symbol "." <?> "module name"
-            put PE{tmodule = Just mod, ..}
+            put (pe {tmodule = Just mod})
             return mod
         Just a -> do
             fail "module had been already declared"
@@ -373,7 +371,7 @@ testIO = do
             let mov = case ls of
                     "d" -> show . ddata
                     "t" -> show . dtypes
-            (_, pe@PE{..}) <- exec pSource <$> (putStr "expr> " >> T.pack <$> getLine)
+            (_, pe) <- exec pSource <$> (putStr "expr> " >> T.pack <$> getLine)
             putStrLn (mov pe) >> testIO
         _ -> test (fst <$> pSource') (T.pack line) >> testIO
 
@@ -390,8 +388,8 @@ pConstP = do
         pat <- argsTo (symbol "=") pPattern
         exp <- expr
         return ((construct pat $ exp), pat)
-    PE{..} <- get
-    put PE{declpat = M.insertWith (<>) n (return e) declpat, ..}
+    pe <- get
+    put (pe {declpat = M.insertWith (<>) n (return e) (declpat pe)})
     return (Const n e)
 
 pConst :: Parser Declaration
@@ -402,8 +400,8 @@ pConst = do
         pat <- argsTo (symbol "=") pLamName
         exp <- expr
         return ((construct pat $ exp), pat)
-    PE{..} <- get
-    put PE{declpat = M.insertWith (<>) n (return e) declpat, ..}
+    pe <- get
+    put (pe {declpat = M.insertWith (<>) n (return e) (declpat pe)})
     return (Const n e)
 
 pPattern :: Parser Pattern
@@ -495,13 +493,13 @@ pType = lexeme $ do
     symbol "::"
     f <- optional $ pForall
     t <- pTypeExpr
-    PE{sigs, ..} <- get
+    pe <- get
     case f of
         Just fl -> do 
-            put (PE{sigs = M.singleton n (Forall fl t) <> sigs, ..})
+            put (pe {sigs = M.singleton n (Forall fl t) <> sigs pe})
             return (TypeOf n (Forall fl t))
         Nothing -> do
-            put (PE{sigs = M.singleton n (Forall [] t) <> sigs, ..})
+            put (pe {sigs = M.singleton n (Forall [] t) <> sigs pe})
             return (TypeOf n (Forall [] t)) -- TODO: add generalization, when no forall specified [for convenience]
 
 -- typeExpr :: Parser Scheme
@@ -535,9 +533,9 @@ pDataDecl = do
             Nothing -> []
             Just a -> a
     let d = Data n cs
-    PE{..} <- get
+    pe <- get
     let t = M.fromList cs
-    put PE{ddata = d:ddata, dtypes = t <> dtypes, ..}
+    put (pe {ddata = d:(ddata pe), dtypes = t <> dtypes pe})
     return d
 
 -- | Case
@@ -549,15 +547,22 @@ pCaseItem = Lexer.lexeme sc $ do
     exp <- expr
     return (pat, exp)
 
-pCase :: Parser Expr
-pCase = do
-    keyword "case"
-    e <- expr
-    keyword "of"
-    alts <- Lexer.indentBlock spaces (return (Lexer.IndentMany (Just (mkPos 5)) (return) pCaseItem))
-    return (Case e alts)
+-- pCase :: Parser Expr
+-- pCase = do
+--     keyword "case"
+--     e <- expr
+--     keyword "of"
+--     alts <- Lexer.indentBlock spaces (return (Lexer.IndentMany (Just (mkPos 5)) (return) pCaseItem))
+--     return (Case e alts)
 
--- demo of data types, just for defining bool, but it can be expanded thru time
+pCase :: Parser Expr
+pCase = Lexer.indentBlock spaces p
+    where
+        p = do
+            keyword "case"
+            e <- expr
+            keyword "of"
+            return (Lexer.IndentSome Nothing (return . (Case e)) pCaseItem)
 
 -- | Indentation-based parsing
 
@@ -578,14 +583,17 @@ pBlockComment =
         Lexer.skipBlockComment "##" "##"
         -- Lexer.skipBlockComment "{-" "-}" 
 
+lexeme' :: Parser a -> Parser a
+lexeme' = Lexer.lexeme sc
+
 lexeme :: Parser a -> Parser a
 lexeme = Lexer.lexeme spaces
 
-indentUnit :: Parser ()
-indentUnit = void (some (char ' ' <|> char '\t'))
-
 sc :: Parser ()
-sc = Lexer.space indentUnit pLineComment pBlockComment
+sc = Lexer.space 
+        hspace1
+        pLineComment
+        pBlockComment
 
 -- | Summary
 
@@ -595,8 +603,8 @@ term =
         [
             try (parens pOp)
         ,   parens expr
-        ,   try pCase
         ,   try pText
+        ,   pCase
         ,   pFix
         ,   pIf
         ,   cIfTurnedOn PatternMatching pLamP pLam
@@ -662,8 +670,8 @@ exec p t = runState (runParserT p "input" t) initPE
 pSource' :: Parser ([Declaration], PE)
 pSource' = do
     e <- some (optional newline *> decl <* optional (symbol ";"))
-    PE{..} <- get
-    return (e, PE{..})
+    pe <- get
+    return (e, pe)
 
 pSource :: Parser Program
 pSource = spaces *> some (decl <* optional (symbol ";"))
