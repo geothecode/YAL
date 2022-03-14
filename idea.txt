@@ -1,5 +1,0 @@
-our parser can handle different (i mean custom)
-operators easily
-beacuse our parser contains of state with 
-parsing environment inside of it
-
