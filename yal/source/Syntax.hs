@@ -27,6 +27,7 @@ data Expr
     | Constructor Name
     | App Expr Expr
     | Lam Pattern Expr -- Lam [Pattern] Expr
+    | LamCase [Alt]
     | Let Name Expr Expr
     | Lit Literal
     | If Expr Expr Expr
@@ -121,12 +122,13 @@ data Error
     | ShouldHaveArgs Int Int
     | MultipleDeclaration Name
     | EndOfType
-    | NoMatchingPatterns
     | NoSuchVariable Name
     | TypesMismatch Name Scheme Scheme
+    | TypesDontMatch
 
     -- Evaluation
     | CannotCallUncallable
+    | NoMatchingPatterns
     | NoMainFunction
     | NotCompletePatterns
 
@@ -140,7 +142,7 @@ data Error
 type Env = Map Name Value
 
 data Value
-    = LamV Env Pattern Expr     -- lambda
+    = LamV Pattern Expr     -- lambda
     | LamCaseV [Alt] 
     | ConV Name [Value]         -- constructor
     | LitV Literal

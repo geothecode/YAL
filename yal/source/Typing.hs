@@ -217,11 +217,11 @@ sizeT _ = 1
 --     s2 <- collect ps v
 --     return (s2 <> s1)
 
-facecontrol :: Pattern -> Typer Types
-facecontrol WildcardP = lnext >> return mempty
-facecontrol LiteralP{} = lnext >> return mempty
-facecontrol (DataConstructorP _ []) = lnext >> return mempty
-facecontrol (DataConstructorP n args) = do
+datapattern :: Pattern -> Typer ()
+datapattern WildcardP = lnext
+datapattern LiteralP{} = lnext
+datapattern (DataConstructorP _ []) = lnext
+datapattern (DataConstructorP n args) = do
         oldt <- gets ltyp
         (_, t) <- inferExpr (Var n)
         inscope t
@@ -229,16 +229,41 @@ facecontrol (DataConstructorP n args) = do
             has  = length args
             need = sizeT t - 1
         if has == need 
-            then (mapM facecontrol args) >> inscope oldt >> return mempty
+            then (mapM datapattern args) >> inscope oldt
             else throwError (ShouldHaveArgs need has)
-facecontrol (VariableP n) = do
+datapattern (VariableP n) = do
     checkThenAdd n
     t <- gets ltyp
     p <- gets lpos
     sc <- generalize (thead (toListT' t !! p))
     lnext
     extendl (M.singleton n sc)
-    return mempty
+    return ()
+
+
+inferAlt :: Alt -> Typer (Subst, Type)
+inferAlt (p, e) = do
+    tv <- fresh
+    let (TypeVar tv') = tv
+    case p of
+        VariableP n -> do
+            record (n, Forall [tv'] tv)
+            (s, t) <- inferExpr e
+            return (s, apply s tv :-> t)
+        LiteralP n -> do
+            (_, lt) <- inferExpr (Lit n)
+            (s, t) <- inferExpr e
+            return (s, lt :-> t)
+        WildcardP -> do
+            (s, t) <- inferExpr e
+            return (s, tv :-> t)
+        d@(DataConstructorP name _) -> do
+            datapattern d
+            (_, nt) <- inferExpr (Var name)
+            inscope nt
+            (s, t) <- inferExpr e
+            clearl
+            return (s, domain nt :-> t)
 
 
 
@@ -253,8 +278,8 @@ toListT' :: Type -> [Type]
 toListT' (a :-> b) = [a] <> toListT' b
 toListT' _ = []
 
-collect :: [Pattern] -> Typer Types
-collect p = (mapM facecontrol p) >> return mempty -- TODO:
+-- collect :: [Pattern] -> Typer Types
+-- collect p = (mapM inferAlt p) >> return mempty -- TODO:
 
 -- TODO:
 -- make local-scope environent in TE to accumulate things line this: data A = A Int; f (A a) = a -- to guess that a :: Int
@@ -294,44 +319,8 @@ inferExpr e = do
 
         Constructor a -> inferExpr (Var a)
 
-        Lam a e -> do
-            tv <- fresh
-            case a of
-                VariableP n -> do
-                    record (n, Forall [] tv)
-                    (s, t) <- inferExpr e
-                    return (s, apply s tv :-> t)
-                LiteralP n -> do
-                    (_, lt) <- inferExpr (Lit n)
-                    (s, t) <- inferExpr e
-                    return (s, lt :-> t)
-                WildcardP -> do
-                    (s, t) <- inferExpr e
-                    return (s, tv :-> t)
-                d@(DataConstructorP name _) -> do
-                    facecontrol d
-                    (_, nt) <- inferExpr (Var name)
-                    inscope nt
-                    (s, t) <- inferExpr e
-                    clearl
-                    return (s, domain nt :-> t)
-                -- LiteralP x -> do
-                --     (s, t) <- inferExpr (Lit x)
-                --     record (n, Forall [] t)
-                --     update s
-                --     unify t tv
-                -- DataConstructorP name args -> do
-                --     (s, t) <- inferExpr (Var name)
-                --     s1 <- collect args t
-                --     extendl s1
-                --     s2 <- unify t tv
-                --     return s2
-                -- _ -> return mempty
-            -- sub <- fromPattern a
-            -- (s, t) <- inferExpr e
+        Lam a e -> inferAlt (a, e)
             
-            -- return (s, apply (s <> sub) tv :-> t)
-
         Let a l r -> do
             (s1, t1) <- inferExpr l
             update s1
@@ -363,7 +352,9 @@ inferExpr e = do
             return (s2 <> s1, apply s2 tv)
         
         Case e alts -> do
-            throwError TODO
+            (s1, t1) <- inferExpr e
+            t <- same (mapM inferAlt alts)
+            return (s1, t1 :-> t)
 
         -- TODO: all type inferences
 
@@ -374,17 +365,27 @@ inferExpr e = do
         Lit (Character _) -> return (mempty, tChar)
         Lit (Text _) -> return (mempty, tText)
 
+-- inferAlt :: Alt -> Typer Type
+-- inferAlt (pat, e) = do
+
+same :: Typer [(Subst, Type)] -> Typer Type
+same p = do
+    case runState (runExceptT p) initTE of
+        (Right (t:ts), _) -> 
+            if and (fmap (== snd t) (fmap snd ts))
+                then return (snd t)
+                else throwError TypesDontMatch
+        (Left err, _) -> throwError err
+-- TODO
+
 inferDecl :: Declaration -> Typer (Subst, Type)
 inferDecl decl = case decl of
     Const a e -> do
-            tv <- fresh
-            record (a, Forall [] tv)
             (s1, t1) <- inferExpr e
-            s2 <- unify (apply s1 tv) t1
-            t <- generalize (apply (s2 <> s1) t1)
+            t <- generalize t1
             record (a, t)
             extendInfered (a, t)
-            return (s2 <> s1, apply (s2 <> s1) t1)
+            return (s1, t1)
     
     Meta _ -> return (mempty, tMeta)
     

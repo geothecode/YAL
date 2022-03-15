@@ -595,6 +595,11 @@ sc = Lexer.space
         pLineComment
         pBlockComment
 
+indented :: Parser a -> Parser [a]
+indented p = Lexer.lineFold spaces $ \s ->
+    let ps = p `sepBy1` try s
+    in ps <* spaces
+
 -- | Summary
 
 term :: Parser Expr

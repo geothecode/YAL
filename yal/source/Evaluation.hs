@@ -149,9 +149,8 @@ evalExpr e = do
                     ea <- evalExpr a
                     eb <- evalExpr b
                     case ea of
-                        LamV env pat e -> do
-                            if env == mempty
-                                then case runMatcher (match pat eb) of
+                        LamV pat e -> do
+                                case runMatcher (match pat eb) of
                                     (Right cond, nenv) ->
                                         if cond
                                             then do
@@ -162,7 +161,6 @@ evalExpr e = do
                                                 -- foldM (flip inlineValue) v (M.toList nenv)
                                             else throwError NoMatchingPatterns
                                     (Left err, _) -> throwError err
-                            else undefined
                         ConV n xs -> return (ConV n (xs <> [eb]))
                         _ -> throwError TODO
         Case e alts -> firstin e alts
@@ -173,7 +171,7 @@ evalExpr e = do
         Lam pat e -> do
             mapM emplace (freenames pat)
             clear
-            return (LamV mempty pat e)
+            return (LamV pat e)
         Var n -> do -- TODO
             ns <- gets frompat
             if n `elem` ns
@@ -353,13 +351,19 @@ evp :: Text -> IO ()
 evp l = 
     case exec pSource l of
         (Right ast, pe) ->
-            case runState (runExceptT (inferProgram ast)) (fromPE pe initTE) of
-                (Left err, _) -> print err
-                (Right _, _) -> do
+            
                     case runEval pe evalProgram of
                         (Right a, _) -> print a
                         (Left err, _) -> print err
         (Left err, _) -> putStrLn (errorBundlePretty err)
+
+typeOf :: Text -> IO ()
+typeOf l = do
+    case exec decl l of
+        (Right ast, pe) ->
+            case runState (runExceptT (inferDecl ast >>= generalize . snd)) (fromPE pe initTE) of
+                (Left err, _) -> print err
+                (Right t, te) -> print t
 {-
 Summary:
 
