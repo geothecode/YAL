@@ -440,7 +440,7 @@ pApp = lexeme $
     <$> term
     <*> some term
     <* notFollowedBy 
-           ((choice (keyword <$> kwrds))
+           ( try (choice (keyword <$> kwrds))
         <|> (pConst $> T.empty) 
         <|> (pType $> T.empty))
 
@@ -540,12 +540,18 @@ pDataDecl = do
 
 -- | Case
 
-pCaseItem :: Parser (Pattern, Expr)
+pCaseItem :: Parser Alt
 pCaseItem = Lexer.lexeme sc $ do
-    pat <- pPattern -- `sepBy1` symbol "," <* symbol "->"
+    pat <- pPattern -- `sepBy1` symbol ","
     symbol "->"
     exp <- expr
     return (pat, exp)
+-- pCaseItem :: Parser Alt
+-- pCaseItem = Lexer.lexeme sc $ do
+--     pat <- pPattern `sepBy1` symbol ","
+--     symbol "->"
+--     exp <- expr
+--     return (pat, exp)
 
 -- pCase :: Parser Expr
 -- pCase = do
@@ -556,13 +562,34 @@ pCaseItem = Lexer.lexeme sc $ do
 --     return (Case e alts)
 
 pCase :: Parser Expr
-pCase = Lexer.indentBlock spaces p
+pCase = (try p' <|> Lexer.indentBlock spaces p)
     where
         p = do
             keyword "case"
             e <- expr
             keyword "of"
-            return (Lexer.IndentSome Nothing (return . (Case e)) pCaseItem)
+            return (Lexer.IndentSome Nothing (return . (\a -> App (LamCase a) e)) pCaseItem)
+        p' = do
+            keyword "case"
+            e <- expr
+            keyword "of"
+            Case e <$> curly (pCaseItem `sepBy` (symbol ";"))
+-- pCase :: Parser Expr
+-- pCase = (try p' <|> Lexer.indentBlock spaces p)
+--     where
+--         p = do
+--             keyword "case"
+--             e <- expr
+--             keyword "of"
+--             return (Lexer.IndentSome Nothing (return . (\a -> App (LamCase a) e)) pCaseItem)
+--         p' = do
+--             keyword "case"
+--             e <- expr
+--             keyword "of"
+--             (\a -> App a e) <$> (LamCase <$> curly (pCaseItem `sepBy` (symbol ";")))
+
+-- pLamCase :: Parser Expr
+-- pLamCase = undefined
 
 -- | Indentation-based parsing
 
@@ -655,7 +682,9 @@ pChar :: Parser Literal
 pChar = Character <$> lexeme (between (char '\'') (char '\'') (oneOf characters))
 
 pLit :: Parser Expr
-pLit = Lit <$> pLit'
+pLit = 
+    -- Lam EmptyP <$> 
+    Lit <$> pLit'
 
 pText :: Parser Expr
 pText = do

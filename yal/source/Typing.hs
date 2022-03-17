@@ -127,6 +127,7 @@ instance Substitutable Type where
     free TypeConstant{} = mempty
     free (TypeVar a) = S.singleton a
     free (a :-> b) = free a `S.union` free b
+    free NoType = error "it's not good, seems something lifted NoType declaration to the top :("
 
 instance Substitutable Scheme where
     apply s (Forall cs t) = Forall cs (apply s' t)
@@ -249,14 +250,14 @@ inferAlt (p, e) = do
         VariableP n -> do
             record (n, Forall [tv'] tv)
             (s, t) <- inferExpr e
-            return (s, apply s tv :-> t)
+            return (s, t)
         LiteralP n -> do
             (_, lt) <- inferExpr (Lit n)
             (s, t) <- inferExpr e
-            return (s, lt :-> t)
+            return (s, t)
         WildcardP -> do
             (s, t) <- inferExpr e
-            return (s, tv :-> t)
+            return (s, t)
         d@(DataConstructorP name _) -> do
             datapattern d
             (_, nt) <- inferExpr (Var name)
@@ -319,7 +320,10 @@ inferExpr e = do
 
         Constructor a -> inferExpr (Var a)
 
-        Lam a e -> inferAlt (a, e)
+        Lam a e -> do
+            case a of
+                EmptyP -> inferExpr e
+                _ -> inferAlt (a, e)
             
         Let a l r -> do
             (s1, t1) <- inferExpr l
@@ -335,7 +339,7 @@ inferExpr e = do
             update s1
             (s2, t2) <- inferExpr r
             s3 <- unify (apply s2 t1) (t2 :-> tv)
-            return (s3 <> s2 <> s1, apply s3 tv)
+            return (s3 <> s2 <> s1, apply (s3 <> s2) tv)
 
         If a l r -> do
             (s1, t1) <- inferExpr a

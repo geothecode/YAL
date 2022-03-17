@@ -1,5 +1,5 @@
 ##
- # Prelude
+ # Prelude Module
  # YAL Team 2022 (c)
 ##
 
@@ -7,13 +7,12 @@
 module prelude 
 
 data Bool = True | False
+data Text = TextCons Char Text | TextNil
 
 data IO
 data Int
 data Char
 data Text
-
-data Text = TextCons Char Text | TextNil
 
 infixl 6 +
 (+) :: Int -> Int -> Int
@@ -29,13 +28,3 @@ infix 4 <
 (<) :: forall a. a -> a -> Bool
 infix 4 ==
 (==) :: forall a. a -> a -> Bool
-
-x = 3
-y a = if a > 0 then 5 + (y (a - 1)) else 0
-
-headText :: Text -> Char
-headText (TextCons a _) = a
-
--- main :: IO
--- main = headText (pure getln)
-main = (headText "i love haskell!") -- works

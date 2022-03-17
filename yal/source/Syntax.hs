@@ -38,7 +38,8 @@ data Expr
 
     deriving (Show, Eq, Ord)
 
-type Alt = (Pattern, Expr) -- Alt = ([Pattern], Expr)
+type Alt = (Pattern, Expr)
+-- type Alt = ([Pattern], Expr)
 
 data Declaration
     = Op Name I Int
@@ -142,8 +143,8 @@ data Error
 type Env = Map Name Value
 
 data Value
-    = LamV Pattern Expr     -- lambda
-    | LamCaseV [Alt] 
+    = LamV Env Pattern Expr     -- lambda
+    -- | LamCaseV Env [Alt] 
     | ConV Name [Value]         -- constructor
     | LitV Literal
     deriving (Show, Eq, Ord)
@@ -153,5 +154,5 @@ data Pattern
     | DataConstructorP Name [Pattern]
     | VariableP Name
     | LiteralP Literal
-    -- | EmptyP
+    | EmptyP
     deriving (Show, Eq, Ord)
