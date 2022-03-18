@@ -18,29 +18,33 @@ initEnv = M.empty
 
 match :: Pattern -> Value -> Matcher
 match p v = case p of
-    WildcardP -> return True
+    WildP -> return True
     
-    DataConstructorP
+    ConP
         name args -> case v of
-            ConV name' args' -> if name == name' 
-                then do
-                    let 
-                        has = (length args')
-                        need = (length args)
-                    if need == has
-                        then and <$> (zipWithM match args args')
-                        else throwError (ShouldHaveArgs has need)
-                else return False
+            ConV name' args' -> 
+                if name == name' 
+                    then do
+                        let 
+                            has = (length args')
+                            need = (length args)
+                        if need == has
+                            then and <$> (zipWithM match args args')
+                            else throwError (ShouldHaveArgs has need)
+                    else return False
             _ -> return False
     
-    VariableP name -> do
+    VarP name -> do
         modify (M.singleton name v <>)
         return True
     
-    LiteralP lit -> case v of
+    LitP lit -> case v of
         LitV lit' -> return (lit == lit')
 
         _ -> return False
+
+matchMany :: [Pattern] -> [Value] -> Matcher
+matchMany ps vs = and <$> zipWithM match ps vs
 
     -- EmptyP -> throwError CannotCallUncallable
 

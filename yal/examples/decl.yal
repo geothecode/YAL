@@ -1,0 +1,11 @@
+{ext|patterns}
+module decl
+
+data Color = Red | Green | Yellow
+
+toInt :: Color -> Int
+toInt Red = 0
+toInt Green = 1
+toInt Yellow = 2
+
+main = toInt Green

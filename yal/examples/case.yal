@@ -4,6 +4,6 @@ g a = case a of
                 2 -> 3 -- WORKS!
                 _ -> y
 
-y a = case a of {2 -> 3; 4 -> 5; a -> a}
+y a = case a of {2 -> 3; 4 -> 5; a -> a;}
 
 main = y 3 -- WORKING!!!!!!!

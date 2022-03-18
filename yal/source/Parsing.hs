@@ -23,7 +23,6 @@ import qualified Data.Set as S
 -- import Control.Monad.Trans.RWS
 
 import Syntax
-import Syntax (Pattern(LiteralP, DataConstructorP))
 
 type Table a = Map Int [Operator Parser a]
 -- parsing environment
@@ -100,12 +99,12 @@ pVar :: Parser Expr
 pVar = Var <$> name
 
 pNum :: Parser Literal
-pNum = Number <$> (lexeme $ do 
-    n <- optional $ char '-'
-    num <- Lexer.decimal
-    return $ case n of
-        Just _ -> negate num
-        Nothing -> num)
+pNum = Number <$> (parens p' <|> p)
+    where
+        p = Lexer.decimal
+        p' = negate <$> (char '-' *> Lexer.decimal)
+            
+
 
 parens :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")
@@ -251,25 +250,20 @@ pOp = Var <$> (T.pack <$> lexeme (some (oneOf ("+-$%&^*/?.,~@<>|#=:" :: String))
 pOp' :: Parser Text
 pOp' = (T.pack <$> lexeme (some (oneOf ("+-$%&^*/?.,~@<>|#=:" :: String))))
 
-pLamP :: Parser Expr
-pLamP = Lam <$> 
-        ((keyword "lam" <|> symbol "\\") *> pPattern) -- lam x OR \x
-    <*> ((construct <$> argsTo (symbol "->") pPattern) >>= (\a -> a <$> expr)) -- zero or some other args and -> followed by expr
-
-pLam :: Parser Expr
-pLam = Lam <$> 
-        ((keyword "lam" <|> symbol "\\") *> pLamName) -- lam x OR \x
-    <*> ((construct <$> argsTo (symbol "->") pLamName) >>= (\a -> a <$> expr)) -- zero or some other args and -> followed by expr
+pLam :: Parser Pattern -> Parser Expr
+pLam pArgs = Lam <$> 
+        ((keyword "lam" <|> symbol "\\") *> pArgs) -- lam x OR \x
+    <*> ((construct <$> argsTo (symbol "->") pArgs) >>= (\a -> a <$> expr)) -- zero or some other args and -> followed by expr
 
 pLamName :: Parser Pattern
 pLamName = do
     o <- getOffset
-    n <- optional (VariableP <$> (name <|> parens name))
+    n <- optional (VarP <$> (name <|> parens name))
     case n of
         Just p -> return p
         Nothing -> do
             setOffset o
-            fail "maybe you meant to use PatternMatching instead?"
+            fail "perhaps you meant to use <patterns> instead?"
 
 
 pExtensions :: Parser Extension
@@ -289,7 +283,13 @@ pExtensions = choice
     ]   <?> "extension"
 
 pLet :: Parser Expr
-pLet = lexeme (Let <$> (keyword "let" *> name) <*> (((construct <$> argsTo (symbol "=") pPattern) >>= (\a -> a <$> expr)) <|> (symbol "=" *> expr)) <*> (keyword "in" *> expr))
+pLet = lexeme $ do
+    keyword "let"
+    d <- decl -- todo to some decl
+    keyword "in"
+    e <- expr
+    return (Let d e) -- TODO
+
 
 -- TODO: pattern matching and stuff combinators
 -- "c" in name for COMBINATOR
@@ -380,50 +380,59 @@ testIO = do
 ticks :: Parser a -> Parser a
 ticks = between (symbol "`") (symbol "`")
 
-pConstP :: Parser Declaration
-pConstP = do
-    n <- (parens pOp' <|> name)
-    o <- getOffset
-    (e, p) <- do
-        pat <- argsTo (symbol "=") pPattern
-        exp <- expr
-        return ((construct pat $ exp), pat)
-    pe <- get
-    put (pe {declpat = M.insertWith (<>) n (return e) (declpat pe)})
-    return (Const n e)
+-- pConstP :: Parser Declaration
+-- pConstP = do
+--     n <- (parens pOp' <|> name)
+--     o <- getOffset
+--     (e, p) <- do
+--         pat <- argsTo (symbol "=") pPattern
+--         exp <- expr
+--         return ((construct pat $ exp), pat)
+--     pe <- get
+--     put (pe {declpat = M.insertWith (<>) n (return e) (declpat pe)})
+--     return (Const n e)
 
-pConst :: Parser Declaration
-pConst = do
+-- pConst :: Parser Declaration
+-- pConst = do
+--     n <- (parens pOp' <|> name)
+--     o <- getOffset
+--     (e, p) <- do
+--         pat <- argsTo (symbol "=") pLamName
+--         exp <- expr
+--         return ((construct pat $ exp), pat)
+--     pe <- get
+--     put (pe {declpat = M.insertWith (<>) n (return e) (declpat pe)})
+--     return (Const n e)
+
+pConst :: Parser Pattern -> Parser Declaration
+pConst pArgs = do
     n <- (parens pOp' <|> name)
-    o <- getOffset
-    (e, p) <- do
-        pat <- argsTo (symbol "=") pLamName
-        exp <- expr
-        return ((construct pat $ exp), pat)
-    pe <- get
-    put (pe {declpat = M.insertWith (<>) n (return e) (declpat pe)})
-    return (Const n e)
+    pat <- pArgs `sepBy` spaces
+    cond <- optional (symbol "|" *> expr)
+    symbol "="
+    exp <- expr
+    return (Const n (pat, cond, exp))
 
 pPattern :: Parser Pattern
 pPattern = lexeme $ choice
     [
             pDataSolo
         ,   pDataPattern
-        ,   keyword "_" $> WildcardP
-        ,   VariableP <$> (name <|> parens name)
-        ,   LiteralP <$> pLit'
+        ,   keyword "_" $> WildP
+        ,   VarP <$> (name <|> parens name)
+        ,   LitP <$> pLit'
     ]
 
 pDataSolo :: Parser Pattern
 pDataSolo = do
     name <- pDataName
-    return (DataConstructorP name mempty)
+    return (ConP name mempty)
 
 pDataPattern :: Parser Pattern
 pDataPattern = parens (do
     name <- pDataName
     args <- pPattern `sepBy` spaces
-    return (DataConstructorP name args))
+    return (ConP name args))
 
 pInfixDecl :: Parser Declaration
 pInfixDecl = do
@@ -432,7 +441,7 @@ pInfixDecl = do
     r <- pPattern
     symbol "="
     e <- expr
-    return (Const op (Lam l (Lam r e)))
+    return (Const op ([l, r], Nothing, e))
 
 pApp :: Parser Expr
 pApp = lexeme $
@@ -441,7 +450,7 @@ pApp = lexeme $
     <*> some term
     <* notFollowedBy 
            ( try (choice (keyword <$> kwrds))
-        <|> (pConst $> T.empty) 
+        <|> (pConst pLamName $> T.empty) 
         <|> (pType $> T.empty))
 
 pIf :: Parser Expr
@@ -458,7 +467,7 @@ pDataName :: Parser Text
 pDataName = lexeme (T.cons <$> upperChar <*> (T.pack <$> many alphaNumChar))
 
 pDataConstructor :: Parser Expr
-pDataConstructor = Constructor <$> pDataName
+pDataConstructor = Con <$> pDataName
 
 -- | Types
 
@@ -540,18 +549,13 @@ pDataDecl = do
 
 -- | Case
 
-pCaseItem :: Parser Alt
-pCaseItem = Lexer.lexeme sc $ do
-    pat <- pPattern -- `sepBy1` symbol ","
-    symbol "->"
-    exp <- expr
-    return (pat, exp)
 -- pCaseItem :: Parser Alt
 -- pCaseItem = Lexer.lexeme sc $ do
---     pat <- pPattern `sepBy1` symbol ","
+--     pat <- pPattern -- `sepBy1` symbol ","
 --     symbol "->"
 --     exp <- expr
 --     return (pat, exp)
+
 
 -- pCase :: Parser Expr
 -- pCase = do
@@ -561,19 +565,8 @@ pCaseItem = Lexer.lexeme sc $ do
 --     alts <- Lexer.indentBlock spaces (return (Lexer.IndentMany (Just (mkPos 5)) (return) pCaseItem))
 --     return (Case e alts)
 
-pCase :: Parser Expr
-pCase = (try p' <|> Lexer.indentBlock spaces p)
-    where
-        p = do
-            keyword "case"
-            e <- expr
-            keyword "of"
-            return (Lexer.IndentSome Nothing (return . (\a -> App (LamCase a) e)) pCaseItem)
-        p' = do
-            keyword "case"
-            e <- expr
-            keyword "of"
-            Case e <$> curly (pCaseItem `sepBy` (symbol ";"))
+-- pCase :: Parser Expr
+-- pCase = 
 -- pCase :: Parser Expr
 -- pCase = (try p' <|> Lexer.indentBlock spaces p)
 --     where
@@ -590,6 +583,28 @@ pCase = (try p' <|> Lexer.indentBlock spaces p)
 
 -- pLamCase :: Parser Expr
 -- pLamCase = undefined
+
+pCaseItem :: Parser Alt
+pCaseItem = Lexer.lexeme sc $ do
+    pat <- pPattern `sepBy` symbol ","
+    cond <- optional (symbol "|" *> expr)
+    symbol "->"
+    exp <- expr
+    return (pat, cond, exp)
+
+pCase :: Parser Expr
+pCase = (try p' <|> Lexer.indentBlock spaces p)
+    where
+        p = do
+            keyword "case"
+            e <- expr `sepBy` symbol ","
+            keyword "of"
+            return (Lexer.IndentSome Nothing (return . (Case e)) pCaseItem)
+        p' = do
+            keyword "case"
+            e <- expr `sepBy` symbol ","
+            keyword "of"
+            Case e <$> curly (pCaseItem `sepEndBy` (symbol ";"))
 
 -- | Indentation-based parsing
 
@@ -639,7 +654,7 @@ term =
         ,   pCase
         ,   pFix
         ,   pIf
-        ,   cIfTurnedOn PatternMatching pLamP pLam
+        ,   cIfTurnedOn PatternMatching (pLam pPattern) (pLam pLamName)
         ,   pLet
         ,   pVar
         ,   pDataConstructor
@@ -652,7 +667,7 @@ decl =
         [
             try pInfixDecl
         ,   try pDataDecl
-        ,   cIfTurnedOn PatternMatching (try pConstP) (try pConst)
+        ,   cIfTurnedOn PatternMatching (try (pConst pPattern)) (try (pConst pLamName))
         ,   try pType
         ,   pModule
         ,   pImport
@@ -689,7 +704,7 @@ pLit =
 pText :: Parser Expr
 pText = do
     tx <- lexeme (between "\"" "\"" (many pChar'))
-    return (foldr (\a e -> App (App (Constructor "TextCons") (Lit (Character a))) e) (Constructor "TextNil") tx)
+    return (foldr (\a e -> App (App (Con "TextCons") (Lit (Character a))) e) (Con "TextNil") tx)
 
 expr :: Parser Expr
 expr = lexeme $ do

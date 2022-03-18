@@ -1,0 +1,32 @@
+f a b | 2 = 5
+    := Const "f" [VarP "a", VarP "b"] (Just (Lit 2)) (Lit 5)
+
+=> Const Name [Pattern] (Maybe Expr) Expr
+         |    |         |            |
+         |    args      |            expr
+         name           cond
+
+case a, b of
+    2, 4 -> 5
+    a, b -> 4
+
+=> Case [Expr] [Alt]
+
+
+=> f 2 3 = 5
+   f a b = 4
+   := \p0 -> \p1 -> case p0, p1 of
+                        2, 3 -> 5
+                        p0, p1 -> 4
+
+=> g | 3 > 2 = 4
+   g = 3
+   := case of
+        | 3 > 2 -> 4
+                -> 3
+
+
+TODO:
+    1) evaluation
+    2) prettyprinter
+    3) typechecker for a bit new evaluation model

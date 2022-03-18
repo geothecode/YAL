@@ -1,0 +1,6 @@
+module lambda
+
+import prelude
+
+data Expr = Var Text | Lam Text Expr | App Expr Expr
+
