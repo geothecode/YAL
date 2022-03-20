@@ -6,6 +6,7 @@
 module Parsing where
 
 import Data.Text (Text)
+import Data.Char (isUpper)
 import qualified Data.Text as T
 import Data.Void
 import Text.Megaparsec hiding (State)
@@ -40,6 +41,7 @@ data PE = PE
     ,   ddata       :: [Declaration] -- since we dont have data args yet we just collect this references
     ,   declpat     :: Map Name [Expr]
     ,   sigs        :: Map Name Scheme
+    ,   datainfo    :: Map Name (Int, Scheme)
     }
 
 turnOn :: Extension -> Parser ()
@@ -56,7 +58,7 @@ type Parser = ParsecT Void Text (State PE)
 
 
 symbol :: Text -> Parser Text
-symbol = Lexer.symbol spaces
+symbol = Lexer.symbol sc
 
 keyword :: Text -> Parser Text
 keyword a = lexeme' (string a <* notFollowedBy alphaNumChar)
@@ -115,17 +117,18 @@ initPE :: PE
 initPE = PE
     {
         btable      = insert (7, InfixL (try (ticks (name <|> try (parens name) <|> parens pOp') >>= (\a -> return (Infix a))))) M.empty
-    ,   utable      = M.empty {- insert (9, unary' "@") $ -}
+    ,   utable      = mempty {- insert (9, unary' "@") $ -}
     ,   typetable   = insert (-1, InfixR (TypeArrow <$ symbol "->")) M.empty
-    ,   exts        = S.empty
+    ,   exts        = mempty
     ,   rec         = False
     ,   lastoffset  = 0
     ,   tmodule     = Nothing
     ,   warnings    = mempty
-    ,   dtypes      = M.empty
+    ,   dtypes      = mempty 
     ,   ddata       = mempty
     ,   declpat     = mempty
-    ,   sigs        = M.empty
+    ,   sigs        = mempty
+    ,   datainfo    = mempty
     }
 {- @ is used to reference to this particular type-variable -}
 
@@ -522,13 +525,21 @@ pType = lexeme $ do
 
 -- | TODO: Data types, but really not
 
-pDataNode :: Name -> Parser (Name, Scheme)
+pDataArg :: Parser Type
+pDataArg = do
+    v'@(n:ns) <- T.unpack <$> pName
+    let v = T.pack v'
+    if isUpper n
+        then return (TypeConstant v)
+        else return (TypeVar (TVar v))
+
+pDataNode :: Name -> Parser (Name, (Int, Scheme))
 pDataNode base = do
     n <- pDataName
-    args <- optional $ pDataName `sepBy` spaces
+    args <- optional $ pDataArg `sepBy` sc
     case args of
-        Nothing -> return (n, Forall [] (TypeConstant base))
-        Just a -> return (n, Forall [] (foldr ((:->) . TypeConstant) (TypeConstant base) a))
+        Nothing -> return (n, (0, Forall [] (TypeConstant base)))
+        Just a -> return (n, (length a, Forall [] (foldr (:->) (TypeConstant base) a)))
 
 -- TODO: pattern matching
 pDataDecl :: Parser Declaration 
@@ -537,14 +548,14 @@ pDataDecl = do
     n <- pDataName
     cs' <- optional $ do
         symbol "="
-        pDataNode n `sepBy1` symbol "|"
+        try (pDataNode n `sepBy1` symbol "|")
     let cs = case cs' of
             Nothing -> []
             Just a -> a
-    let d = Data n cs
-    pe <- get
+    let d = Data n
     let t = M.fromList cs
-    put (pe {ddata = d:(ddata pe), dtypes = t <> dtypes pe})
+    -- modify (\pe -> pe {ddata = d:(ddata pe), dtypes = t <> dtypes pe})
+    modify (\pe -> pe {datainfo = t <> (datainfo pe)})
     return d
 
 -- | Case
@@ -648,17 +659,38 @@ term :: Parser Expr
 term =
     choice
         [
+            -- dbg "parens op" $ 
             try (parens pOp)
-        ,   parens expr
-        ,   try pText
-        ,   pCase
-        ,   pFix
-        ,   pIf
-        ,   cIfTurnedOn PatternMatching (pLam pPattern) (pLam pLamName)
-        ,   pLet
-        ,   pVar
-        ,   pDataConstructor
-        ,   pLit
+        ,   
+            -- dbg "parens exp" $ 
+            parens expr
+        ,   
+            -- dbg "lit" $
+            pLit
+        ,   
+            -- dbg "text" $ 
+            try pText
+        ,   
+            -- dbg "case" $ 
+            pCase
+        ,   
+            -- dbg "fix" $ 
+            pFix
+        ,   
+            -- dbg "if" $ 
+            pIf
+        ,   
+            -- dbg "lam" $
+            cIfTurnedOn PatternMatching (pLam pPattern) (pLam pLamName)
+        ,   
+            -- dbg "let" $
+            pLet
+        ,   
+            -- dbg "datacon" $
+            pDataConstructor
+        ,   
+            -- dbg "var" $
+            pVar
         ]
 
 decl :: Parser Declaration
@@ -699,7 +731,7 @@ pChar = Character <$> lexeme (between (char '\'') (char '\'') (oneOf characters)
 pLit :: Parser Expr
 pLit = 
     -- Lam EmptyP <$> 
-    Lit <$> pLit'
+    Lit <$> lexeme pLit'
 
 pText :: Parser Expr
 pText = do
@@ -708,7 +740,6 @@ pText = do
 
 expr :: Parser Expr
 expr = lexeme $ do
-    optional spaces
     e <- get
     (makeExprParser (try pApp <|> term) (flat $ utable e <> btable e))
 

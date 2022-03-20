@@ -66,7 +66,7 @@ data Declaration
     | Const Name Alt -- f a | 3 > 2 = a + 4 := Const "f" [VarP "a"] (Just (3 > 2)) (Var "a" + 4)
     | TypeOf Name Scheme
     | Meta Expr
-    | Data Name [(Name, Scheme)] -- since we dont have args yet 
+    | Data Name -- [(Name, Scheme)] -- since we dont have args yet 
     deriving (Show, Eq, Ord)    
 
 -- data Bool <args> = <constructor> <args> [<OR> ...]

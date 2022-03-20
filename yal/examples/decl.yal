@@ -1,7 +1,6 @@
 {ext|patterns}
-module decl
 
-data Color = Red | Green | Yellow
+data Color = Red | Green | Yellow;
 
 toInt :: Color -> Int
 toInt Red = 0

@@ -30,3 +30,8 @@ TODO:
     1) evaluation
     2) prettyprinter
     3) typechecker for a bit new evaluation model
+    4) recursion
+
+HOW DOES IT WORK:
+    lam pattern expr -> lamv env pattern expr
+    

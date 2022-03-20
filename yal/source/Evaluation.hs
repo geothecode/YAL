@@ -37,16 +37,17 @@ instance Monoid Global where
     mempty = Global
         {
             counter = 0
+            -- utility thing
         ,   arity = mempty
+            -- arity of data constructors and constants
         ,   decls = mempty
+            -- declarations represented as multi-case
         }
 
 -- | Declarations
 
 nullCounter :: Eval ()
-nullCounter = do
-    g <- get
-    put (g {counter = 0})
+nullCounter = modify (\g -> g {counter = 0})
 
 newName :: Eval Text
 newName = do
@@ -68,6 +69,10 @@ fromDecl (Const name alt@(pat, cond, exp)) = do
             cse <- mkCase alt
             put (g {decls = M.insert name cse (decls g)})
         Just _ -> put (g {decls = (M.adjust (addAlt alt) name (decls g))})
+fromDecl _ = return ()
+
+fromPE :: PE -> Global -> Global
+fromPE pe gl = gl {arity = (M.map fst (datainfo pe)) <> (arity gl)}
 
 mkCase :: Alt -> Eval Expr
 mkCase alt@(pat, cond, exp) = do
@@ -83,7 +88,40 @@ addAlt :: Alt -> Expr -> Expr
 addAlt alt (Lam a e) = Lam a (addAlt alt e) 
 addAlt alt (Case a b) = Case a (b <> [alt])
 
+matchArity :: Name -> [Value] -> Eval [Value]
+matchArity name xs = do
+    a <- gets arity
+    case M.lookup name a of
+        Nothing -> throwError (NoSuchVariable name)
+        Just ar -> if ar >= length xs
+            then return xs
+            else throwError DifferentAmountOfArgs
+
+mkText :: String -> Value
+mkText [] = (ConV "TextNil" [])
+mkText (x:xs) = (ConV "TextCons" [LitV (Character x), mkText xs])
+
+fromOperator :: Name -> Value -> Value -> Eval Value
+fromOperator op (LitV (Number a)) (LitV (Number b)) = return $ LitV $ Number $ case op of
+    "+" -> a + b
+    "-" -> a - b
+    "*" -> a * b
+    "/" -> a `div` b
+    "^" -> a ^ b
+fromOperator op (LitV a) (LitV b) = return $ (\a -> ConV (T.pack $ show a) []) $ case op of
+    ">" -> a > b
+    "<" -> a < b
+    "==" -> a == b
+    ">=" -> a >= b
+    "<=" -> a <= b
+    "/=" -> a /= b
+fromOperator op l@(ConV "TextCons" _) r@(ConV "TextCons" _) = return $ mkText $ case op of
+    "++" -> showValue l ++ showValue r
+
 -- | Main Evaluation
+
+evalManyE :: [Expr] -> Env -> Eval [Value]
+evalManyE ex en = mapM (flip evalExpr en) ex
 
 evalExpr :: Expr -> Env -> Eval Value
 evalExpr e en = do
@@ -96,6 +134,11 @@ evalExpr e en = do
         Con n -> return (ConV n [])
         Lit l -> return (LitV l)
         
+        Infix op le re -> do
+            l <- evalExpr le en
+            r <- evalExpr re en
+            fromOperator op l r
+
         -- | Hard
         App a b -> do
             case a of
@@ -107,9 +150,28 @@ evalExpr e en = do
                     ea <- evalExpr a en
                     eb <- evalExpr b en
                     case ea of
-                        ConV n xs -> return (ConV n (xs <> [eb]))
+                        ConV n xs -> do
+                            args <- matchArity n (xs <> [eb])
+                            return (ConV n args)
+                        LamV env pat e -> do
+                            case runMatcher (match pat eb) of
+                                (Right matches, nenv) ->
+                                    if matches
+                                        then evalExpr e (nenv <> env)
+                                        else throwError NoMatchingPatterns
+                                (Left err, _) -> throwError err
             -- todo
-        
+                -- recursion
+        If c l r -> do
+            cond <- evalExpr c en
+            if cond == (ConV "True" [])
+                then evalExpr l en
+                else evalExpr r en
+
+        Fix v -> evalExpr (App v (Fix v)) en
+
+        Lam pat e -> return (LamV en pat e)
+
         Var n -> do
             case M.lookup n en of
                 Just v -> return v
@@ -119,7 +181,39 @@ evalExpr e en = do
                         Nothing -> throwError (NoSuchVariable n)
                         Just ex -> evalExpr ex en
         
-        Case exps alts -> undefined
+        Case exps alts -> do
+            case exps of
+                [] -> go alts
+                x  -> do
+                    vals <- evalManyE exps en
+                    goMany alts vals
+                where
+                    go [] = throwError NoMatchingPatterns
+                    go (a:as) = case a of
+                        ([],Nothing, e) -> evalExpr e en
+                        ([],Just cond, e) -> do
+                            c <- evalExpr cond en
+                            if c == (ConV "True" [])
+                                then evalExpr e en
+                                else go as -- todo
+                    goMany [] _ = throwError NoMatchingPatterns
+                    goMany (a:as) b = case a of
+                        (pat,Nothing,e) -> case runMatcher (matchMany pat b) of
+                            (Right matches, nenv) ->
+                                if matches
+                                    then evalExpr e (nenv <> en)
+                                    else goMany as b
+                            (Left err, _) -> throwError err
+                    -- redudant, todo: unify patterns above
+
+evalSource :: [Declaration] -> Eval Value
+evalSource declars = do
+    mapM fromDecl declars
+    d <- gets decls
+    case M.lookup "main" d of
+        Nothing -> throwError NoMainFunction
+        Just expr -> evalExpr expr mempty
+    
 -- | Utility Functions
 
 toText :: String -> Expr
@@ -130,9 +224,22 @@ showValue :: Value -> String
 showValue v = case v of
     LitV (Number a) -> show a
     LitV (Character a) -> show a
-    (ConV "TextCons" (x:xs)) -> "\"" <> show x <> show xs <> "\""
-    (ConV "TextNil" _) -> ""
-    (ConV a _) -> T.unpack a 
+    t -> showText t
+    (ConV a _) -> T.unpack a
+
+showText :: Value -> String
+showText (ConV "TextNil" []) = ""
+showText (ConV "TextCons" ((LitV (Character ch)):[tc])) = "\"" <> [ch] <> go tc <> "\""
+    where
+        go (ConV "TextCons" ((LitV (Character ch)):[tc'])) = [ch]<>(go tc')
+        go (ConV "TextNil" []) = ""
+
+testEval :: Text -> IO ()
+testEval t = case exec (some decl `sepEndBy` symbol ";" *> expr <|> expr) t of
+    (Right ast, _) -> do
+        res <- runEval mempty (evalExpr ast mempty)
+        print res
+    (Left err, _) -> putStrLn (errorBundlePretty err)
 
 runEval :: Global -> Eval a -> IO (Either Error a, Global)
 runEval g e = runStateT (runExceptT e) g
