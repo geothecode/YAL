@@ -1,10 +1,18 @@
 {ext|patterns}
 
 data Color = Red | Green | Yellow;
+data Bool = True | False;
 
 toInt :: Color -> Int
 toInt Red = 0
 toInt Green = 1
 toInt Yellow = 2
 
-main = toInt Green
+infix 4 <
+infixl 6 -
+infixl 6 +
+
+fib n | n < 2 = 1
+fib n = (fib (n - 1)) + (fib (n - 2))
+
+main = fib 5

@@ -1,9 +1,7 @@
-g a = case a of
-        a -> a
-        y -> case y of
-                2 -> 3 -- WORKS!
-                _ -> y
+{ext|patterns}
 
-y a = case a of {2 -> 3; 4 -> 5; a -> a;}
+import prelude;
 
-main = y 3 -- WORKING!!!!!!!
+f a b = case a, b of {_, _ -> 3}
+
+main = f 54 172

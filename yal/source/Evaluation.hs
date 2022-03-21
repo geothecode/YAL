@@ -9,6 +9,7 @@ import Parsing
 -- import Typing hiding (locl)
 import Syntax
 import PatternMatching
+import Module
 
 import Text.Megaparsec hiding (State, match)
 import Control.Monad.State
@@ -26,9 +27,10 @@ type Eval a = ExceptT Error (StateT Global IO) a
 data    Global
     =   Global
     {
-        counter :: Int
-    ,   arity :: Map Name Int
-    ,   decls :: Map Name Expr
+        counter     :: Int
+    ,   arity       :: Map Name Int
+    ,   decls       :: Map Name Expr
+    ,   isMain      :: Bool
     } deriving (Show, Eq, Ord)
 
 instance Semigroup Global where
@@ -42,6 +44,8 @@ instance Monoid Global where
             -- arity of data constructors and constants
         ,   decls = mempty
             -- declarations represented as multi-case
+        ,   isMain = True
+            -- set if we are in main module
         }
 
 -- | Declarations
@@ -69,10 +73,32 @@ fromDecl (Const name alt@(pat, cond, exp)) = do
             cse <- mkCase alt
             put (g {decls = M.insert name cse (decls g)})
         Just _ -> put (g {decls = (M.adjust (addAlt alt) name (decls g))})
+fromDecl (Module dir) = case dir of
+    ["main"] -> return ()
+    [] -> return ()
+    _ -> modify (\g -> g {isMain = False || isMain g})
+-- fromDecl (Import dir _) = case dir of
+--     x -> do
+--         f <- liftIO $ do
+--                 p <- runFinder (findModule (last x))
+--                 return (fst p)
+--         case f of
+--             Right source -> case exec pSource source of
+--                 (Right prog, pe) -> do
+--                     modify (\g -> fromPE pe g)
+--                     res <- liftIO (runEval mempty (mapM fromDecl prog))
+--                     case res of
+--                         (Right _, global) -> modify (adjustGlobal global)
+--                         (Left _, _) -> return ()
+--                 -- (Left err, _) -> throwError err -- actually cannot happen (i guess)
+--             Left err -> throwError err
 fromDecl _ = return ()
 
 fromPE :: PE -> Global -> Global
 fromPE pe gl = gl {arity = (M.map fst (datainfo pe)) <> (arity gl)}
+
+adjustGlobal :: Global -> Global -> Global
+adjustGlobal g1 g2 = g2 {decls = (decls g1) <> (decls g2)}
 
 mkCase :: Alt -> Eval Expr
 mkCase alt@(pat, cond, exp) = do
@@ -101,20 +127,25 @@ mkText :: String -> Value
 mkText [] = (ConV "TextNil" [])
 mkText (x:xs) = (ConV "TextCons" [LitV (Character x), mkText xs])
 
+mkNum :: Int -> Value
+mkNum = LitV . Number
+
+mkBool :: Bool -> Value
+mkBool a = ConV (T.pack $ show a) []
+
 fromOperator :: Name -> Value -> Value -> Eval Value
-fromOperator op (LitV (Number a)) (LitV (Number b)) = return $ LitV $ Number $ case op of
-    "+" -> a + b
-    "-" -> a - b
-    "*" -> a * b
-    "/" -> a `div` b
-    "^" -> a ^ b
-fromOperator op (LitV a) (LitV b) = return $ (\a -> ConV (T.pack $ show a) []) $ case op of
-    ">" -> a > b
-    "<" -> a < b
-    "==" -> a == b
-    ">=" -> a >= b
-    "<=" -> a <= b
-    "/=" -> a /= b
+fromOperator op (LitV (Number a)) (LitV (Number b)) = return $ case op of
+    "+" -> mkNum (a + b)
+    "-" -> mkNum (a - b)
+    "*" -> mkNum (a * b)
+    "/" -> mkNum (a `div` b)
+    "^" -> mkNum (a ^ b)
+    ">" -> mkBool (a > b)
+    "<" -> mkBool (a < b)
+    "==" -> mkBool (a == b)
+    ">=" -> mkBool (a >= b)
+    "<=" -> mkBool (a <= b)
+    "/=" -> mkBool (a /= b)
 fromOperator op l@(ConV "TextCons" _) r@(ConV "TextCons" _) = return $ mkText $ case op of
     "++" -> showValue l ++ showValue r
 
@@ -131,6 +162,8 @@ evalExpr e en = do
         Var "getln" -> do
             ex <- toText <$> liftIO getLine
             evalExpr ex mempty
+        Var "undefined" -> throwError Undefined
+        
         Con n -> return (ConV n [])
         Lit l -> return (LitV l)
         
@@ -146,6 +179,9 @@ evalExpr e en = do
                     eb <- evalExpr b en
                     liftIO $ putStrLn (showValue eb)
                     return (ConV "IO" [])
+                Con "TODO" -> do
+                    msg <- evalExpr b en
+                    throwError (TODO (T.pack $ showText msg))
                 _ -> do
                     ea <- evalExpr a en
                     eb <- evalExpr b en
@@ -160,6 +196,7 @@ evalExpr e en = do
                                         then evalExpr e (nenv <> env)
                                         else throwError NoMatchingPatterns
                                 (Left err, _) -> throwError err
+                        _ -> throwError CannotCallUncallable
             -- todo
                 -- recursion
         If c l r -> do
@@ -198,22 +235,33 @@ evalExpr e en = do
                                 else go as -- todo
                     goMany [] _ = throwError NoMatchingPatterns
                     goMany (a:as) b = case a of
-                        (pat,Nothing,e) -> case runMatcher (matchMany pat b) of
-                            (Right matches, nenv) ->
-                                if matches
-                                    then evalExpr e (nenv <> en)
+                        (pat,cond,e) -> do
+                            case runMatcher (matchMany pat b) of
+                                (Right matches, nenv) ->
+                                    if matches
+                                    then case cond of
+                                        Nothing -> evalExpr e (nenv <> en)
+                                        Just c -> do
+                                            passes <- evalExpr c (nenv <> en)
+                                            if passes == (ConV "True" [])
+                                                then evalExpr e (nenv <> en)
+                                                else goMany as b
                                     else goMany as b
-                            (Left err, _) -> throwError err
+                                (Left err, _) -> throwError err
                     -- redudant, todo: unify patterns above
 
 evalSource :: [Declaration] -> Eval Value
 evalSource declars = do
     mapM fromDecl declars
-    d <- gets decls
-    case M.lookup "main" d of
-        Nothing -> throwError NoMainFunction
-        Just expr -> evalExpr expr mempty
-    
+    cond <- gets isMain
+    if cond
+        then do
+            d <- gets decls
+            case M.lookup "main" d of
+                Nothing -> throwError NoMainFunction
+                Just expr -> evalExpr expr mempty
+        else throwError NotInMainModule
+
 -- | Utility Functions
 
 toText :: String -> Expr
@@ -239,6 +287,13 @@ testEval t = case exec (some decl `sepEndBy` symbol ";" *> expr <|> expr) t of
     (Right ast, _) -> do
         res <- runEval mempty (evalExpr ast mempty)
         print res
+    (Left err, _) -> putStrLn (errorBundlePretty err)
+
+testSource :: Text -> IO ()
+testSource f = case exec pSource f of
+    (Right x, pe) -> do
+        (v, v') <- runEval (fromPE pe mempty) (evalSource x)
+        print v
     (Left err, _) -> putStrLn (errorBundlePretty err)
 
 runEval :: Global -> Eval a -> IO (Either Error a, Global)

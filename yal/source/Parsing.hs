@@ -54,7 +54,8 @@ turnOff e = do
     pe <- get
     put (pe {exts = S.delete e (exts pe)})
 
-type Parser = ParsecT Void Text (State PE)
+-- type Parser = ParsecT Void Text (StateT PE IO)
+type Parser = ParsecT Void Text (State PE )
 
 
 symbol :: Text -> Parser Text
@@ -352,31 +353,19 @@ fromMaybe :: (Maybe a) -> [a]
 fromMaybe Nothing = []
 fromMaybe (Just a) = [a]
 
-test :: Show a => Parser a -> Text -> IO ()
-test p t = case evalState (runParserT p "<input>" t) initPE of
-    Right x -> print x
-    Left e -> putStrLn $ errorBundlePretty e
 
-testEnv :: Text -> IO ()
-testEnv t = case runState (runParserT pSource "<input>" t) initPE of
-    (Right x, pe) -> do
-        print x
-        putStrLn "\nenvironment:"
-        print (declpat pe)
-    (Left e, _) -> putStrLn $ errorBundlePretty e
-
-testIO :: IO ()
-testIO = do
-    line@(l:ls) <- getLine
-    case l of
-        '@' -> putStr "Exiting..."
-        '!' -> do
-            let mov = case ls of
-                    "d" -> show . ddata
-                    "t" -> show . dtypes
-            (_, pe) <- exec pSource <$> (putStr "expr> " >> T.pack <$> getLine)
-            putStrLn (mov pe) >> testIO
-        _ -> test (fst <$> pSource') (T.pack line) >> testIO
+-- testIO :: IO ()
+-- testIO = do
+--     line@(l:ls) <- getLine
+--     case l of
+--         '@' -> putStr "Exiting..."
+--         '!' -> do
+--             let mov = case ls of
+--                     "d" -> show . ddata
+--                     "t" -> show . dtypes
+--             (_, pe) <- exec pSource <$> (putStr "expr> " >> T.pack <$> getLine)
+--             putStrLn (mov pe) >> testIO
+--         _ -> test (fst <$> pSource') (T.pack line) >> testIO
 
 -- Top-Level Parsers
 
@@ -526,12 +515,17 @@ pType = lexeme $ do
 -- | TODO: Data types, but really not
 
 pDataArg :: Parser Type
-pDataArg = do
-    v'@(n:ns) <- T.unpack <$> pName
-    let v = T.pack v'
-    if isUpper n
-        then return (TypeConstant v)
-        else return (TypeVar (TVar v))
+pDataArg = (p2 <|> p1)
+    where
+        p1 = do
+            v'@(n:ns) <- T.unpack <$> pName
+            let v = T.pack v'
+            if isUpper n
+                then return (TypeConstant v)
+                else return (TypeVar (TVar v))
+        p2 = do
+            t <- parens (pTypeExpr)
+            return t
 
 pDataNode :: Name -> Parser (Name, (Int, Scheme))
 pDataNode base = do
@@ -694,7 +688,7 @@ term =
         ]
 
 decl :: Parser Declaration
-decl = 
+decl = lexeme $
     choice
         [
             try pInfixDecl
@@ -745,13 +739,25 @@ expr = lexeme $ do
 
 -- | Final
 
-exec p t = runState (runParserT p "input" t) initPE
+test :: Show a => Parser a -> Text -> IO ()
+test p t = case evalState (runParserT p "<input>" t) initPE of
+    Right x -> print x
+    Left e -> putStrLn $ errorBundlePretty e
 
-pSource' :: Parser ([Declaration], PE)
-pSource' = do
-    e <- some (optional newline *> decl <* optional (symbol ";"))
-    pe <- get
-    return (e, pe)
+-- testEnv :: Text -> IO ()
+-- testEnv t = case runState (runParserT pSource "<input>" t) initPE of
+--     (Right x, pe) -> do
+--         print x
+--         putStrLn "\nenvironment:"
+--         print (declpat pe)
+--     (Left e, _) -> putStrLn $ errorBundlePretty e
 
-pSource :: Parser Program
-pSource = spaces *> some (decl <* optional (symbol ";"))
+
+-- exec' p t pe = runState (runParserT p "input" t) pe
+
+-- pSource' :: Parser ([Declaration], PE)
+-- pSource' = do
+--     e <- some (decl <* optional (symbol ";" <* spaces) <* optional spaces)
+--     pe <- get
+--     return (e, pe)
+

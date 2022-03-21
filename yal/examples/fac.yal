@@ -1,12 +1,14 @@
 {ext|patterns}
 
-data Bool = True | False ; 
-data Int ;
+data Bool = True | False;
+data Int;
 
-infix 4 >
 infixl 7 *
 infixl 6 -
+infixl 6 +
 
-fac n = if n > 0 then (n * fac (n - 1)) else 1
+fac 0 = 1
+fac 1 = 1
+fac n = n * (fac (n - 1))
 
-main = 5 > 2
+main = fac 20

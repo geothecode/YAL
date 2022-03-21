@@ -4,15 +4,15 @@
 ##
 
 {ext|patterns}
-module prelude 
+module prelude;
 
-data Bool = True | False
-data Text = TextCons Char Text | TextNil
+data Bool = True | False;
+data Text = TextCons Char Text | TextNil;
 
-data IO
-data Int
-data Char
-data Text
+data IO;
+data Int;
+data Char;
+data Text;
 
 infixl 6 +
 (+) :: Int -> Int -> Int

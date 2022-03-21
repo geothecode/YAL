@@ -150,9 +150,15 @@ data Error
     | NoMainFunction
     | NotCompletePatterns
     | DifferentAmountOfArgs
+    | NotInMainModule
+    | Undefined
+
+    -- File System
+    | NoModule Name
+    | NoPackage Name
 
     -- Custom
     | UnknownError
-    | TODO
+    | TODO Name
     deriving (Show, Eq, Ord)
 
