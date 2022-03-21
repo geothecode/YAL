@@ -20,8 +20,7 @@ type Thunk = Either Expr Value -- if i add heap and gc one day
 -- | General Syntax
 
 data Literal
-    = Number Int
-    | Text Text
+    = Number Integer
     | Character Char
     deriving (Show, Eq, Ord)
 
@@ -137,7 +136,7 @@ data Error
     | InfiniteType TypeVar Type
     | NotInSignature TypeVar
     | UnboundVariable Name
-    | ShouldHaveArgs Int Int
+    | ShouldHaveArgs Integer Integer
     | MultipleDeclaration Name
     | EndOfType
     | NoSuchVariable Name

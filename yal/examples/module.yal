@@ -1,0 +1,9 @@
+module main;
+
+import prelude;
+
+g a = case a of
+        42 -> "The universe!"
+        a  -> "You're close!"
+
+main = g (read getln)

@@ -10,6 +10,7 @@ import Parsing
 import Syntax
 import PatternMatching
 import Module
+import Pretty
 
 import Text.Megaparsec hiding (State, match)
 import Control.Monad.State
@@ -34,6 +35,7 @@ data    Global
     } deriving (Show, Eq, Ord)
 
 instance Semigroup Global where
+    (<>) = adjustGlobal
 
 instance Monoid Global where
     mempty = Global
@@ -127,14 +129,17 @@ mkText :: String -> Value
 mkText [] = (ConV "TextNil" [])
 mkText (x:xs) = (ConV "TextCons" [LitV (Character x), mkText xs])
 
-mkNum :: Int -> Value
+mkNum :: Integer -> Value
 mkNum = LitV . Number
 
 mkBool :: Bool -> Value
 mkBool a = ConV (T.pack $ show a) []
 
+toText' :: String -> String
+toText' xs = init (tail xs)
+
 fromOperator :: Name -> Value -> Value -> Eval Value
-fromOperator op (LitV (Number a)) (LitV (Number b)) = return $ case op of
+fromOperator op (LitV (Number a')) (LitV (Number b')) = return $ case op of
     "+" -> mkNum (a + b)
     "-" -> mkNum (a - b)
     "*" -> mkNum (a * b)
@@ -146,6 +151,9 @@ fromOperator op (LitV (Number a)) (LitV (Number b)) = return $ case op of
     ">=" -> mkBool (a >= b)
     "<=" -> mkBool (a <= b)
     "/=" -> mkBool (a /= b)
+    where
+        a = fromIntegral a'
+        b = fromIntegral b'
 fromOperator op l@(ConV "TextCons" _) r@(ConV "TextCons" _) = return $ mkText $ case op of
     "++" -> showValue l ++ showValue r
 
@@ -179,6 +187,11 @@ evalExpr e en = do
                     eb <- evalExpr b en
                     liftIO $ putStrLn (showValue eb)
                     return (ConV "IO" [])
+                Var "read" -> do
+                    eb <- evalExpr b en
+                    -- let num = read (toText' (runPretty eb))
+                    let num = read (runPretty eb)
+                    return (LitV (Number num))
                 Con "TODO" -> do
                     msg <- evalExpr b en
                     throwError (TODO (T.pack $ showText msg))
@@ -273,7 +286,7 @@ showValue v = case v of
     LitV (Number a) -> show a
     LitV (Character a) -> show a
     t -> showText t
-    (ConV a _) -> T.unpack a
+    -- (ConV a _) -> T.unpack a
 
 showText :: Value -> String
 showText (ConV "TextNil" []) = ""
@@ -293,7 +306,7 @@ testSource :: Text -> IO ()
 testSource f = case exec pSource f of
     (Right x, pe) -> do
         (v, v') <- runEval (fromPE pe mempty) (evalSource x)
-        print v
+        putStrLn (runPretty v)
     (Left err, _) -> putStrLn (errorBundlePretty err)
 
 runEval :: Global -> Eval a -> IO (Either Error a, Global)

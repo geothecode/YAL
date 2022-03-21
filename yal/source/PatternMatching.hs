@@ -26,8 +26,8 @@ match p v = case p of
                 if name == name' 
                     then do
                         let 
-                            has = (length args')
-                            need = (length args)
+                            has = fromIntegral (length args')
+                            need = fromIntegral (length args)
                         if need == has
                             then and <$> (zipWithM match args args')
                             else throwError (ShouldHaveArgs has need)

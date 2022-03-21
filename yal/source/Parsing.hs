@@ -711,7 +711,7 @@ pLit' = choice
     ]
 
 characters :: [Char]
-characters = ['a'..'z'] <> ['A'..'Z'] <> ['0'..'9'] <> "!@#$%^&*()_-+=[]{}~`|/?.,<>:; "
+characters = ['a'..'z'] <> ['A'..'Z'] <> ['0'..'9'] <> "!@#$%^&*()_-+=[]{}~`|/?.,<>:;' "
 
 escapedchars :: [Char]
 escapedchars = "\'\"\n\r\a"

@@ -1,6 +1,12 @@
-module lambda
+module lambda;
 
-import prelude
+import prelude;
 
-data Expr = Var Text | Lam Text Expr | App Expr Expr
+data Expr = Var Text | Lam Text Expr | App Expr Expr;
+
+showExpr (Var a) = a
+showExpr (Lam name e) = "\\" <> name <> " -> " <> showExpr expr
+showExpr (App e1 e2) = "(" <> showExpr e1 <> " " <> showExpr e2 <> ")"
+
+main = 2
 
