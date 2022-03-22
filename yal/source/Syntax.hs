@@ -161,3 +161,10 @@ data Error
     | TODO Name
     deriving (Show, Eq, Ord)
 
+data Command
+    = ClearConsole
+    | QuitSession
+    | PrintEnv
+    | CallCommand
+    | WhichType
+    deriving (Show, Eq, Ord)

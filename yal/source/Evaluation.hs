@@ -78,7 +78,7 @@ fromDecl (Const name alt@(pat, cond, exp)) = do
 fromDecl (Module dir) = case dir of
     ["main"] -> return ()
     [] -> return ()
-    _ -> modify (\g -> g {isMain = False || isMain g})
+    _ -> modify (\g -> g {isMain = False})
 -- fromDecl (Import dir _) = case dir of
 --     x -> do
 --         f <- liftIO $ do
@@ -100,7 +100,7 @@ fromPE :: PE -> Global -> Global
 fromPE pe gl = gl {arity = (M.map fst (datainfo pe)) <> (arity gl)}
 
 adjustGlobal :: Global -> Global -> Global
-adjustGlobal g1 g2 = g2 {decls = (decls g1) <> (decls g2)}
+adjustGlobal g1 g2 = g2 {decls = (decls g1) <> (decls g2), arity = (arity g1) <> (arity g2)}
 
 mkCase :: Alt -> Eval Expr
 mkCase alt@(pat, cond, exp) = do
@@ -129,17 +129,17 @@ mkText :: String -> Value
 mkText [] = (ConV "TextNil" [])
 mkText (x:xs) = (ConV "TextCons" [LitV (Character x), mkText xs])
 
-mkNum :: Integer -> Value
-mkNum = LitV . Number
+mkNum :: Integer -> Eval Value
+mkNum = return . LitV . Number
 
-mkBool :: Bool -> Value
-mkBool a = ConV (T.pack $ show a) []
+mkBool :: Bool -> Eval Value
+mkBool a = return $ ConV (T.pack $ show a) []
 
 toText' :: String -> String
 toText' xs = init (tail xs)
 
 fromOperator :: Name -> Value -> Value -> Eval Value
-fromOperator op (LitV (Number a')) (LitV (Number b')) = return $ case op of
+fromOperator op (LitV (Number a')) (LitV (Number b')) = case op of
     "+" -> mkNum (a + b)
     "-" -> mkNum (a - b)
     "*" -> mkNum (a * b)
@@ -151,11 +151,13 @@ fromOperator op (LitV (Number a')) (LitV (Number b')) = return $ case op of
     ">=" -> mkBool (a >= b)
     "<=" -> mkBool (a <= b)
     "/=" -> mkBool (a /= b)
+    _ -> throwError (NoSuchVariable op)
     where
         a = fromIntegral a'
         b = fromIntegral b'
-fromOperator op l@(ConV "TextCons" _) r@(ConV "TextCons" _) = return $ mkText $ case op of
-    "++" -> showValue l ++ showValue r
+fromOperator op l@(ConV "TextCons" _) r@(ConV "TextCons" _) = case op of
+    "++" -> return $ mkText $ showValue l ++ showValue r
+    _ -> throwError (NoSuchVariable op)
 
 -- | Main Evaluation
 
@@ -172,13 +174,19 @@ evalExpr e en = do
             evalExpr ex mempty
         Var "undefined" -> throwError Undefined
         
-        Con n -> return (ConV n [])
+        Con n -> do
+            args <- matchArity n []
+            return (ConV n args)
         Lit l -> return (LitV l)
         
         Infix op le re -> do
-            l <- evalExpr le en
-            r <- evalExpr re en
-            fromOperator op l r
+            d <- gets decls
+            case M.lookup op d of
+                Just _ -> evalExpr (App (App (Var op) le) re) en
+                Nothing -> do
+                    l <- evalExpr le en
+                    r <- evalExpr re en
+                    fromOperator op l r
 
         -- | Hard
         App a b -> do

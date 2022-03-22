@@ -135,9 +135,9 @@ initPE = PE
 
 -- Maybe we should return (Var a) for unification purposes ? ISSUE:
 binary :: I -> Text -> Operator Parser Expr
-binary N a = InfixN (Infix a <$ symbol a)
-binary L a = InfixL (Infix a <$ symbol a)
-binary R a = InfixR (Infix a <$ symbol a)
+binary N a = InfixN (Infix a <$ symbol a <* notFollowedBy (symbol a))
+binary L a = InfixL (Infix a <$ symbol a <* notFollowedBy (symbol a))
+binary R a = InfixR (Infix a <$ symbol a <* notFollowedBy (symbol a))
 
 unary :: Text -> Operator Parser Expr
 unary a = Control.Monad.Combinators.Expr.Postfix (Syntax.Postfix a <$ symbol a)

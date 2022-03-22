@@ -18,6 +18,7 @@ import System.IO.Unsafe
 
 import Syntax
 import Parsing
+import Pretty (runPretty)
 
 data    FEnv 
     =   FEnv
@@ -107,8 +108,8 @@ getImports _ = return initPE
 parserStep :: Parser Declaration
 parserStep = do
     d <- decl
-    case unsafePerformIO (runFinder (getImports d)) of
-        (Left err, _) -> fail (show err) -- TODO: prettyprinting function for this
+    case unsafePerformIO (runFinder (getImports d)) of -- EVIL!!!!!!!!!!!
+        (Left err, _) -> fail (runPretty err) -- TODO: prettyprinting function for this
         (Right pe, _) -> do
             modify (adjustPE pe)
             return d
@@ -117,15 +118,22 @@ pSource :: Parser Program
 pSource = spaces *> some (parserStep <* optional (lexeme (symbol ";")))
 
 exec p t = runState (runParserT p "input" t) initPE
+execute p t pe = runState (runParserT p "input" t) pe
 
 
 adjustPE :: PE -> PE -> PE
 adjustPE pe1 pe2 = pe2 
     {
-        btable = (btable pe1) <> (btable pe2)
-    ,   utable = (utable pe1) <> (utable pe2)
+        btable = M.unionWith (<>) (btable pe1) (btable pe2)
+    ,   utable = M.unionWith (<>) (utable pe1) (utable pe2)
+    ,   typetable = M.unionWith (<>) (typetable pe1) (typetable pe2)
     ,   dtypes = (dtypes pe1) <> (dtypes pe2)
     ,   sigs = (sigs pe1) <> (sigs pe2)
     ,   datainfo = (datainfo pe1) <> (datainfo pe2)
-    ,   typetable = (typetable pe1) <> (typetable pe2)
     }
+
+instance Semigroup PE where
+    (<>) = adjustPE
+
+instance Monoid PE where
+    mempty = initPE
