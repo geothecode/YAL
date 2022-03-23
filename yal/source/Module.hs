@@ -19,6 +19,7 @@ import System.IO.Unsafe
 import Syntax
 import Parsing
 import Pretty (runPretty)
+import Typing
 
 data    FEnv 
     =   FEnv
@@ -112,13 +113,16 @@ parserStep = do
         (Left err, _) -> fail (runPretty err) -- TODO: prettyprinting function for this
         (Right pe, _) -> do
             modify (adjustPE pe)
+            -- case runTyperV (inferDecls ds) of
+            --     Left err -> throwError err
+            --     Right te -> 
             return d
 
 pSource :: Parser Program
 pSource = spaces *> some (parserStep <* optional (lexeme (symbol ";")))
 
 exec p t = runState (runParserT p "input" t) initPE
-execute p t pe = runState (runParserT p "input" t) pe
+execute p t pe nam = runState (runParserT p nam t) pe
 
 
 adjustPE :: PE -> PE -> PE

@@ -430,10 +430,13 @@ pInfixDecl :: Parser Declaration
 pInfixDecl = do
     l <- pPattern
     op <- (pOp' <|> ticks name)
-    r <- pPattern
-    symbol "="
-    e <- expr
-    return (Const op ([l, r], Nothing, e))
+    if op == "|"
+        then empty
+        else do
+            r <- pPattern
+            symbol "="
+            e <- expr
+            return (Const op ([l, r], Nothing, e))
 
 pApp :: Parser Expr
 pApp = lexeme $

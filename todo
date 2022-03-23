@@ -29,11 +29,13 @@ case a, b of
 TODO:
     1) evaluation -- seems working
     2) prettyprinter
-    3) typechecker for a bit new evaluation model
+    3) typechecker for a bit new evaluation model -- seems working
     4) recursion -- seems working
     5) check for import cycles
     6) check for ovelapping declarations
     7) check for many more
+    8) add load and reload to shell
+    9) involve typechecker into shell
 
 HOW DOES IT WORK:
     lam pattern expr -> lamv env pattern expr

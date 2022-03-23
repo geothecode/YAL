@@ -187,6 +187,11 @@ evalExpr e en = do
                     l <- evalExpr le en
                     r <- evalExpr re en
                     fromOperator op l r
+        
+        Let (Const name alt) exp -> do
+            e <- mkCase alt
+            v <- evalExpr e en
+            evalExpr exp (M.singleton name v <> en)
 
         -- | Hard
         App a b -> do

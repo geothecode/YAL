@@ -33,10 +33,11 @@ showError n e = text "error:" <+> "\n\t" <+> case e of
     NotInSignature tv -> text "not in signature:" <+> pretty n tv
     UnboundVariable t -> text "unbound variable:" <+> text (T.unpack t)
     ShouldHaveArgs a b -> text "should have" <+> integer a <+> "arguments, but has" <+> integer b
-    MultipleDeclaration n -> text "multiple declaration: " <+> text (T.unpack n)
+    -- MultipleDeclaration n -> text "multiple declaration: " <+> text (T.unpack n)
     NoSuchVariable n -> text "there is no variable: " <+> text (T.unpack n)
-    TypesMismatch name l r -> text "types mismatch in" <+> text (T.unpack name) <+> "declaration:\n\t" <+> pretty n l <+> "\n\t" <+> pretty n r
-    TypesDontMatch -> text "types do not match"
+    Mismatch name l r -> text "types mismatch in" <+> text (T.unpack name) <+> "declaration:\n\t" <+> pretty n l <+> "\n\t" <+> pretty n r
+    MoreGeneral name l r -> text "next declaration of" <+> text (T.unpack name) <+> "is more general in:\n\t" <+> pretty n l <+> "\n\t" <+> pretty n r
+    -- TypesDontMatch -> text "types do not match"
 
     CannotCallUncallable -> text "cannot call uncallable"
     NoMatchingPatterns -> text "non-exhaustive patterns"
@@ -64,7 +65,8 @@ instance Pretty Expr where
     pretty n (Infix op l r) = parensIf (n>0) (pretty (n+1) l <+> text (T.unpack op) <+> pretty (n+1) r)
     pretty n (If c l r) = parensIf (n>0) ("if" <+> pretty n c <+> "\n\tthen" <+> pretty n l <+> "\n\telse" <+> pretty n r)
     pretty n (Postfix op e) = parens (pretty n e <> text (T.unpack op))
-    -- pretty n (Let ...)
+    pretty n (Let (Const name (pat, Nothing, expr)) exp) = "let" <+> text (T.unpack name) <+> flat n pat <+> "=" <+> pretty n expr <+> "in" <+> pretty n exp
+    pretty n (Let (Const name (pat, Just cond, expr)) exp) = "let" <+> text (T.unpack name) <+> flat n pat <+> "|" <+> pretty n cond <+> "=" <+> pretty n expr <+> "in" <+> pretty n exp
     pretty n (Case exps alts) = parensIf (n>0) ("case" <+> sepBy n "," exps <+> "of" <+> "\n\t" <+> sepBy n "\n\r" alts)
 
 instance Pretty Alt where

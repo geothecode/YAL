@@ -136,14 +136,20 @@ data Error
     | InfiniteType TypeVar Type
     | NotInSignature TypeVar
     | UnboundVariable Name
-    | ShouldHaveArgs Integer Integer
-    | MultipleDeclaration Name
-    | EndOfType
-    | NoSuchVariable Name
-    | TypesMismatch Name Scheme Scheme
-    | TypesDontMatch
+    | MoreGeneral Name Type Type
+    | Mismatch Name Type Type
+    --     UnificationFail Type Type
+    -- | InfiniteType TypeVar Type
+    -- | NotInSignature TypeVar
+    -- | UnboundVariable Name
+    -- | MultipleDeclaration Name
+    -- | EndOfType
+    -- | TypesMismatch Name Scheme Scheme
+    -- | TypesDontMatch
 
     -- Evaluation
+    | NoSuchVariable Name
+    | ShouldHaveArgs Integer Integer
     | CannotCallUncallable
     | NoMatchingPatterns
     | NoMainFunction
@@ -167,4 +173,6 @@ data Command
     | PrintEnv
     | CallCommand
     | WhichType
+    | LoadFile
+    | ReloadFile
     deriving (Show, Eq, Ord)
