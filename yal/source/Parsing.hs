@@ -24,6 +24,8 @@ import qualified Data.Set as S
 -- import Control.Monad.Trans.RWS
 
 import Syntax
+import Typing
+import Pretty (runPretty)
 
 type Table a = Map Int [Operator Parser a]
 -- parsing environment
@@ -40,7 +42,7 @@ data PE = PE
     ,   dtypes      :: Map Name Scheme
     ,   ddata       :: [Declaration] -- since we dont have data args yet we just collect this references
     ,   declpat     :: Map Name [Expr]
-    ,   sigs        :: Map Name Scheme
+    ,   sigs        :: TE
     ,   datainfo    :: Map Name (Int, Scheme)
     }
 
@@ -491,6 +493,9 @@ pTypeExpr = do
     e <- get
     makeExprParser pTypeE (flat (typetable e)) -- WORKS!!!!!
 
+addSig :: Name -> Scheme -> TE -> TE
+addSig n sc te = te {infered = M.singleton n sc <> (infered te)}
+
 pType :: Parser Declaration
 pType = lexeme $ do
     n <- (name <|> parens pOp')
@@ -500,10 +505,10 @@ pType = lexeme $ do
     pe <- get
     case f of
         Just fl -> do 
-            put (pe {sigs = M.singleton n (Forall fl t) <> sigs pe})
+            put (pe {sigs = addSig n (Forall fl t) (sigs pe)})
             return (TypeOf n (Forall fl t))
         Nothing -> do
-            put (pe {sigs = M.singleton n (Forall [] t) <> sigs pe})
+            put (pe {sigs = addSig n (Forall [] t) (sigs pe)})
             return (TypeOf n (Forall [] t)) -- TODO: add generalization, when no forall specified [for convenience]
 
 -- typeExpr :: Parser Scheme
@@ -535,8 +540,14 @@ pDataNode base = do
     n <- pDataName
     args <- optional $ pDataArg `sepBy` sc
     case args of
-        Nothing -> return (n, (0, Forall [] (TypeConstant base)))
-        Just a -> return (n, (length a, Forall [] (foldr (:->) (TypeConstant base) a)))
+        Nothing -> do
+            let sc = Forall [] (TypeConstant base)
+            modify (\g -> g {sigs = addSig n sc (sigs g)})
+            return (n, (0, sc))
+        Just a -> do
+            let sc = Forall [] (foldr (:->) (TypeConstant base) a)
+            modify (\g -> g {sigs = addSig n sc (sigs g)})
+            return (n, (length a, sc))
 
 -- TODO: pattern matching
 pDataDecl :: Parser Declaration 
@@ -691,8 +702,8 @@ term =
         ]
 
 decl :: Parser Declaration
-decl = lexeme $
-    choice
+decl = lexeme $ do
+    d <- choice
         [
             try pInfixDecl
         ,   try pDataDecl
@@ -705,6 +716,12 @@ decl = lexeme $
         ,   cIfTurnedOn PostfixOperators pPostfix empty
         ,   pPragma
         ]
+    s <- gets sigs
+    case customRunTyper (typerStepD d) s of
+        Left err -> fail (runPretty err)
+        Right (_, te, _) -> do
+            modify (\g -> g {sigs = te <> (sigs g)})
+            return d
 
 pLit' :: Parser Literal
 pLit' = choice

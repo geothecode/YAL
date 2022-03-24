@@ -35,8 +35,21 @@ TODO:
     6) check for ovelapping declarations
     7) check for many more
     8) add load and reload to shell
-    9) involve typechecker into shell
+    9) involve typechecker into shell -- seems badly working
+    10) fix problems with typechecker
+        such as:
+            id id (when it is a constant application)
+        because (let id a = a in id id) is being infered right: a -> a
+        , but when it is: id a = a
+                          f = id id -- no way to be right :(
+    
+
 
 HOW DOES IT WORK:
     lam pattern expr -> lamv env pattern expr
     
+line -> parser => ast -> finder?
+    import -> collect data -> again.
+    not import -> typechecker?
+        good -> collect data -> evaluation -> result -> again.
+        not good -> error -> again.

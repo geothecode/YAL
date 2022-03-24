@@ -101,6 +101,7 @@ instance Pretty Type where
     pretty _ NoType = mempty
 
 instance Pretty Scheme where
+    pretty n (Forall [] t) = pretty n t
     pretty n (Forall fs t) = "forall" <+> flat n fs <> "." <+> pretty n t
 
 instance Pretty Declaration where

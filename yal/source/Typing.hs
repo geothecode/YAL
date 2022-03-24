@@ -6,7 +6,6 @@
 module Typing where
 
 import Syntax
-import Parsing                  (PE(..))
 
 import Data.Set                 (Set)
 import Data.Map                 (Map)
@@ -112,6 +111,11 @@ instance Substitutable a => Substitutable [a] where
 
     free = foldr (S.union . free) mempty
 
+instance Substitutable () where
+    apply _ _ = ()
+
+    free = mempty
+
 -- | Typing
 
 letters :: [String]
@@ -137,11 +141,14 @@ generalize env t = Forall as t
 lookupEnv :: Name -> Typer Type
 lookupEnv a = do
     (sc, ts) <- ask
+    infered <- gets infered
     case M.lookup a ts of
         Just t -> return t
         Nothing -> case M.lookup a sc of
                         Just t -> instantiate t
-                        Nothing -> throwError (UnboundVariable a)
+                        Nothing -> case M.lookup a infered of 
+                            Just t -> instantiate t
+                            Nothing -> throwError (UnboundVariable a)
 
 inEnvS :: (Name, Scheme) -> Typer a -> Typer a
 inEnvS (a,b) m = local (\(x, y) -> ((M.insertWith const a b x), y)) m
@@ -193,6 +200,8 @@ inferExpr e = case e of
         let sc = generalize e t1
         inEnvS (name, sc) (inferExpr c)
 
+    Con n -> inferExpr (Var n)
+
     App a b -> do
         t1 <- inferExpr a
         t2 <- inferExpr b
@@ -242,7 +251,9 @@ inferAlt (pats, cond, e) = do
             unify t tBool
         Nothing -> return ()
     t <- inEnvT' tvars (inferExpr e)
-    unify t (last typs)
+    if typs == []
+        then return () 
+        else unify t (last typs)
     return (foldr (:->) t typs)
 
 inferDecl :: Declaration -> Typer ()
@@ -255,7 +266,9 @@ inferDecl (Const name alt) = do
             s <- checkGenerality name sct sc't
             return (generalize mempty s)
         Nothing -> return sc
-    put (g {infered = M.insert name scheme (infered g)})
+    put (g {infered = M.insertWith const name scheme (infered g)})
+inferDecl (TypeOf name sc) = modify (\g -> g {infered = M.insertWith const name sc (infered g)})
+inferDecl _ = return ()
 
 inferDecls :: [Declaration] -> Typer ()
 inferDecls ds = mapM inferDecl ds >> return ()
@@ -297,7 +310,7 @@ instance {-# OVERLAPS #-} Semigroup Subst where
     a <> b = (apply a) <$> b `M.union` a
 
 unify :: Type -> Type -> Typer ()
-unify a b = tell [(a, b)]
+unify a b = tell [(a, b), (b, a)]
 
 unifyMany :: [Type] -> [Type] -> Solver Subst
 unifyMany [] [] = return mempty
@@ -341,19 +354,57 @@ runSolver cs = runExcept $ solver (mempty, cs)
 runTyper' :: Typer a -> Either Error (a, TE, [Constraint])
 runTyper' typer = runExcept (runRWST typer mempty mempty)
 
-runTyper :: Typer Type -> Either Error Scheme
-runTyper typer = 
-    case runTyper' typer of
+customRunTyper :: Typer a -> TE -> Either Error (a, TE, [Constraint])
+customRunTyper typer te = runExcept (runRWST typer mempty te)
+
+runTyper'' :: Substitutable a => Typer a -> TE -> Either Error (a, TE, [Constraint])
+runTyper'' typer te = 
+    case customRunTyper typer te of
         Left err -> Left err
         Right (t, te, cs) -> 
             case runSolver cs of
                 Left err -> Left err
-                Right sub -> Right (generalize mempty (apply sub t))
+                Right sub -> 
+                    Right ((apply sub t), te, cs)
                     -- case runTyper' (closeOver (apply sub t)) of
                     --     Left err -> Left err
                     --     Right (sc, _, _) -> Right sc
+
+runTyper :: Substitutable a => Typer a -> TE -> Either Error (a, TE)
+runTyper t te = (\(a,b,_) -> (a,b)) <$> runTyper'' t te
+
+dbg :: (Substitutable a, Show a) => Typer a -> IO ()
+dbg typer = case runTyper'' typer mempty of
+    Left err -> print err
+    Right (a, te, cs) -> do
+        print a
+        print (infered te)
+        print cs
+
+getScheme :: Typer Type -> Typer Scheme
+getScheme typ = do
+    e <- get
+    case customRunTyper typ e of
+        Left err -> throwError err
+        Right (t, te, cs) -> do
+            case runSolver cs of
+                Left err -> throwError err
+                Right sub -> closeOver (apply sub t)
+
 
 runTyperV :: Typer () -> Either Error TE
 runTyperV t = case runTyper' t of
     Right (_, te, _) -> Right te
     Left err -> Left err
+
+typerStepD :: Declaration -> Typer ()
+typerStepD decl = inferDecl decl
+
+typerStepE :: Expr -> Typer Scheme
+typerStepE e = do
+    env <- gets infered
+    t <- inferExpr e
+    return (generalize env t)
+
+fromSchemes :: Schemes -> TE -> TE
+fromSchemes sc te = te {infered = sc <> (infered te)}

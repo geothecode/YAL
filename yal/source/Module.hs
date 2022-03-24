@@ -104,7 +104,7 @@ getImports (Import dir _) = case dir of
                         return pe
                 -- (Left err, _) -> throwError err -- actually cannot happen (i guess)
             Left err -> throwError err
-getImports _ = return initPE
+getImports _ = return mempty
 
 parserStep :: Parser Declaration
 parserStep = do

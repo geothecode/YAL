@@ -1,3 +1,8 @@
+-- {-#
+--     LANGUAGE
+--         BangPatterns
+-- #-}
+
 module Shell where
 
 import Module
@@ -28,7 +33,6 @@ data    ShellBuffer
     ,   tenv :: TE
     ,   glob :: Global
     ,   file :: FilePath
-    ,   exns :: [Extension]
     }
 
 type Shell = StateT ShellBuffer IO
@@ -43,7 +47,6 @@ instance Monoid ShellBuffer where
         ,   glob = mempty
         ,   tenv = mempty
         ,   file = "input"
-        ,   exns = mempty
         }
 
 adjustShell :: ShellBuffer -> ShellBuffer -> ShellBuffer
@@ -73,7 +76,7 @@ commandParser = do
 
 evalCommand :: (Command, Maybe (Either Text Expr)) -> ShellBuffer -> IO ()
 evalCommand (c,a) sb = case c of
-    QuitSession -> putStrLn "finishing session..."
+    QuitSession -> return ()
     ClearConsole -> PROC.callCommand "cls" >> shell sb
     LoadFile -> case a of
         Just (Left fname) -> undefined
@@ -82,7 +85,12 @@ evalCommand (c,a) sb = case c of
         Just (Left cmd) -> PROC.callCommand (T.unpack cmd) >> shell sb
         _ -> shell sb
     WhichType -> case a of
-        (Just (Left name)) -> undefined
+        (Just (Right expr)) -> do
+            putStrLn $
+                case runTyper (typerStepE expr) (tenv sb) of
+                    Left err -> runPretty err
+                    Right (sc, _) -> runPretty expr <> " :: " <> runPretty sc
+            shell sb
 
 upgl :: Global -> ShellBuffer -> ShellBuffer
 upgl g b = b {glob = g <> (glob b)}
@@ -90,6 +98,8 @@ upgl g b = b {glob = g <> (glob b)}
 uppe :: PE -> ShellBuffer -> ShellBuffer
 uppe pe b = b {penv = pe <> (penv b)}
 
+upte :: TE -> ShellBuffer -> ShellBuffer
+upte te b = b {tenv = te <> (tenv b)}
 
 shell :: ShellBuffer -> IO ()
 shell b = do
@@ -101,20 +111,28 @@ shell b = do
         _ -> do
             case execute shellStepParser line (penv b) (file b) of
                 (Right parsed, pe) -> do
-                    let b' = (upgl (fromPE pe (glob b)) $ uppe pe b)
+                    let b' = (upte (sigs pe) $ upgl (fromPE pe (glob b)) $ uppe pe b)
                     case parsed of
                         Left expr -> do
-                            v <- runEval (glob b') (evalExpr expr mempty)
-                            putStrLn $ 
-                                case v of
-                                    (Left err, _) -> runPretty err
-                                    (Right value, _) -> runPretty value
-                            shell b'
+                            case runTyper (typerStepE expr) (tenv b') of
+                                Left err -> putStrLn (runPretty err) >> shell b'
+                                Right (_, _) -> do
+                                    v <- runEval (glob b') (evalExpr expr mempty)
+                                    putStrLn $ 
+                                        case v of
+                                            (Left err, _) -> runPretty err
+                                            (Right value, _) -> runPretty value
+                                    shell b'
                         Right decl -> do
-                            v <- runEval (glob b') (mapM fromDecl decl)
-                            case v of
-                                (_, gl) -> do
-                                    shell (upgl gl b')
+                            -- print (infered (tenv b'))
+                            case runTyper (mapM typerStepD decl) (tenv b') of
+                                Left err -> putStrLn (runPretty err) >> shell b'
+                                Right (_, te) -> do
+                                    let b'' = upte te b'
+                                    v <- runEval (glob b'') (mapM fromDecl decl)
+                                    case v of
+                                        (_, gl) -> do
+                                            shell (upgl gl b'')
                 (Left err, _) -> do
                     putStrLn (errorBundlePretty err)
                     shell b
