@@ -66,6 +66,7 @@ commandParser = do
             arg <- optional $ argParser
             let c = case com of
                         a | (a `elem` ["l", "load"]) -> LoadFile
+                        a | (a `elem` ["cl"]) -> ClearEnv
                         a | (a `elem` ["r", "reload"]) -> ReloadFile
                         a | (a `elem` ["t", "type"]) -> WhichType
                         a | (a `elem` ["q", "quit"]) -> QuitSession
@@ -91,6 +92,7 @@ evalCommand (c,a) sb = case c of
                     Left err -> runPretty err
                     Right (sc, _) -> runPretty expr <> " :: " <> runPretty sc
             shell sb
+    ClearEnv -> shell (uppe (penv sb) mempty)
 
 upgl :: Global -> ShellBuffer -> ShellBuffer
 upgl g b = b {glob = g <> (glob b)}
@@ -106,7 +108,7 @@ shell b = do
     -- line <- liftIO $ shellGetLine
     putStr "sh> "
     line <- (\a -> if a == "" then ":!" else T.pack a) <$> getLine
-    case execute commandParser line mempty (file b) of
+    case execute commandParser line (penv b) (file b) of
         (Right c, _) -> evalCommand c b
         _ -> do
             case execute shellStepParser line (penv b) (file b) of
@@ -114,9 +116,9 @@ shell b = do
                     let b' = (upte (sigs pe) $ upgl (fromPE pe (glob b)) $ uppe pe b)
                     case parsed of
                         Left expr -> do
-                            case runTyper (typerStepE expr) (tenv b') of
+                            case runTyper'' (inferExpr expr) (tenv b') of
                                 Left err -> putStrLn (runPretty err) >> shell b'
-                                Right (_, _) -> do
+                                Right (_, _, _) -> do
                                     v <- runEval (glob b') (evalExpr expr mempty)
                                     putStrLn $ 
                                         case v of
@@ -125,9 +127,9 @@ shell b = do
                                     shell b'
                         Right decl -> do
                             -- print (infered (tenv b'))
-                            case runTyper (mapM typerStepD decl) (tenv b') of
+                            case runTyper'' (mapM inferDecl decl) (tenv b') of
                                 Left err -> putStrLn (runPretty err) >> shell b'
-                                Right (_, te) -> do
+                                Right (_, te, _) -> do
                                     let b'' = upte te b'
                                     v <- runEval (glob b'') (mapM fromDecl decl)
                                     case v of

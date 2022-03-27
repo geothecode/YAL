@@ -10,7 +10,7 @@ import Syntax
 import Data.Set                 (Set)
 import Data.Map                 (Map)
 import Data.Text                (Text)
-import Data.List                (nub)
+import Data.List                (nub, groupBy)
 import qualified Data.Set       as S
 import qualified Data.Map       as M
 import qualified Data.Text      as T
@@ -251,9 +251,6 @@ inferAlt (pats, cond, e) = do
             unify t tBool
         Nothing -> return ()
     t <- inEnvT' tvars (inferExpr e)
-    if typs == []
-        then return () 
-        else unify t (last typs)
     return (foldr (:->) t typs)
 
 inferDecl :: Declaration -> Typer ()
@@ -307,10 +304,18 @@ checkGenerality name a b = throwError (Mismatch name a b) -- if types aren't equ
 -- | Constraints
 
 instance {-# OVERLAPS #-} Semigroup Subst where
-    a <> b = (apply a) <$> b `M.union` a
+    -- a <> b = M.fromList $ concat $ zipWith genSub (M.toList (apply a <$> b)) (M.toList a) 
+    -- a <> b = M.fromList $ go ((M.toList (apply a <$> b)) <> (M.toList a))
+    a <> b = M.union (apply a <$> b) a
+
+-- genSub :: (TypeVar, Type) -> (TypeVar, Type) -> [(TypeVar, Type)]
+-- genSub (a, TypeVar t1) (b, t2) | a == b = [(a, TypeVar t1), (t1, t2)]
+-- genSub (a, t1) (b, TypeVar t2) | a == b = [(a, t1), (t2, t1)]
+-- genSub (a, t1) (b, t2) | a == b = [(a,t1)]
+-- genSub a b = [a,b]
 
 unify :: Type -> Type -> Typer ()
-unify a b = tell [(a, b), (b, a)]
+unify a b = tell [(a, b)]
 
 unifyMany :: [Type] -> [Type] -> Solver Subst
 unifyMany [] [] = return mempty
@@ -346,10 +351,19 @@ solver (sub, cs) =
             s <- unifies t1 t2
             solver (s <> sub, ts)
 
+-- go :: Eq a => [(a,a)] -> [(a,a)] 
+-- go xs = concat $ (\a -> if length a > 1 then pairs $ snd <$> a else a) <$> groupBy (\a b -> fst a == fst b) xs
+-- pairs :: [a] -> [(a,a)]
+-- pairs [] = []
+-- pairs (x:xs) = fmap (x,) xs <> pairs xs
+
 -- | Finishing
 
 runSolver :: [Constraint] -> Either Error Subst
 runSolver cs = runExcept $ solver (mempty, cs)
+
+getConstraints :: Typer Type -> Either Error [Constraint]
+getConstraints t = customRunTyper t ((\a g -> g {infered = a}) (M.singleton "+" (Forall [] (tInt :-> tInt :-> tInt))) mempty) >>= (\(_,_,c)-> return c) 
 
 runTyper' :: Typer a -> Either Error (a, TE, [Constraint])
 runTyper' typer = runExcept (runRWST typer mempty mempty)

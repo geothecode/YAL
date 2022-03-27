@@ -175,4 +175,5 @@ data Command
     | WhichType
     | LoadFile
     | ReloadFile
+    | ClearEnv
     deriving (Show, Eq, Ord)
