@@ -66,6 +66,7 @@ commandParser = do
             arg <- optional $ argParser
             let c = case com of
                         a | (a `elem` ["l", "load"]) -> LoadFile
+                        a | (a `elem` ["db"]) -> DebugBuffer
                         a | (a `elem` ["cl"]) -> ClearEnv
                         a | (a `elem` ["r", "reload"]) -> ReloadFile
                         a | (a `elem` ["t", "type"]) -> WhichType
@@ -88,11 +89,15 @@ evalCommand (c,a) sb = case c of
     WhichType -> case a of
         (Just (Right expr)) -> do
             putStrLn $
-                case runTyper (typerStepE expr) (tenv sb) of
+                case runTyper'' (inferExpr expr) (tenv sb) of
                     Left err -> runPretty err
-                    Right (sc, _) -> runPretty expr <> " :: " <> runPretty sc
+                    Right (t, _, _) -> runPretty expr <> " :: " <> runPretty (generalize (infered $ tenv sb) t)
             shell sb
     ClearEnv -> shell (uppe (penv sb) mempty)
+    DebugBuffer -> do
+        print (glob sb)
+        print (infered $ sigs $ penv sb)
+        shell sb
 
 upgl :: Global -> ShellBuffer -> ShellBuffer
 upgl g b = b {glob = g <> (glob b)}

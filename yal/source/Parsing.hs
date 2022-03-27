@@ -781,3 +781,20 @@ test p t = case evalState (runParserT p "<input>" t) initPE of
 --     pe <- get
 --     return (e, pe)
 
+adjustPE :: PE -> PE -> PE
+adjustPE pe1 pe2 = pe2 
+    {
+        btable = M.unionWith (<>) (btable pe1) (btable pe2)
+    ,   utable = M.unionWith (<>) (utable pe1) (utable pe2)
+    ,   typetable = M.unionWith (<>) (typetable pe1) (typetable pe2)
+    ,   dtypes = (dtypes pe1) <> (dtypes pe2)
+    ,   sigs = (sigs pe1) <> (sigs pe2)
+    ,   datainfo = (datainfo pe1) <> (datainfo pe2)
+    }
+
+instance Semigroup PE where
+    (<>) = adjustPE
+
+instance Monoid PE where
+    mempty = initPE
+

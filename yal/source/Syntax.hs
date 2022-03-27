@@ -176,4 +176,5 @@ data Command
     | LoadFile
     | ReloadFile
     | ClearEnv
+    | DebugBuffer
     deriving (Show, Eq, Ord)

@@ -7,6 +7,11 @@ module Typing where
 
 import Syntax
 
+-- | Debug
+import Debug
+import Pretty
+import Text.PrettyPrint hiding ((<>))
+
 import Data.Set                 (Set)
 import Data.Map                 (Map)
 import Data.Text                (Text)
@@ -38,7 +43,7 @@ type Constraint
     = (Type, Type)
 
 type Subst
-    = Map TypeVar Type
+    = Map Type Type
 
 type Schemes -- parser collects info about parsed typesignatures (dtypes)
     = Map Name Scheme
@@ -83,8 +88,8 @@ class Substitutable a where
 
 instance Substitutable Type where
     apply _ tc@TypeConstant{} = tc
-    apply s t@(TypeVar a) = M.findWithDefault t a s
     apply s (l :-> r) = apply s l :-> apply s r
+    apply s t = M.findWithDefault t t s
 
     free TypeConstant{} = mempty
     free (TypeVar a) = S.singleton a
@@ -92,7 +97,7 @@ instance Substitutable Type where
 
 instance Substitutable Scheme where
     apply s (Forall as t) = Forall as (apply s' t)
-        where s' = foldr M.delete s as
+        where s' = foldr M.delete s (TypeVar <$> as)
     
     free (Forall as t) = free t `S.difference` S.fromList as
 
@@ -130,7 +135,7 @@ fresh = do
 instantiate :: Scheme -> Typer Type
 instantiate (Forall as t) = do
     as' <- mapM (const fresh) as
-    let s = M.fromList (zip as as')
+    let s = M.fromList (zip (TypeVar <$> as) as')
     return (apply s t)
 
 generalize :: Schemes -> Type -> Scheme
@@ -179,6 +184,10 @@ toListT :: Type -> [Type]
 toListT (a :-> b) = [a] <> toListT b
 toListT _ = []
 
+toListT' :: Type -> [Type]
+toListT' (a :-> b) = [a] <> toListT b
+toListT' a = return a
+
 tInt, tChar, tBool, tText :: Type
 tInt = TypeConstant "Int"
 tChar = TypeConstant "Char"
@@ -217,9 +226,42 @@ inferExpr e = case e of
         unify t2 t3
         return t2
 
+    -- Case exps alts -> do
+    --     ts1 <- mapM inferExpr exps
+    --     ts2 <- mapM inferAlt alts
+    --     case allSame ts2 of
+    --         Nothing -> do
+    --             let t = head ts2
+    --             matchTypes ts1 (toListT' t)
+    --         Just t -> throwError (Mismatch "case" (head ts2) t)
     
     i@(Infix{}) -> inferExpr (fromFixity i)
     i@(Postfix{}) -> inferExpr (fromFixity i)
+
+infix 4 ===
+(===) :: Type -> Type -> Bool
+a@TypeConstant{} === b@TypeConstant{} | a == b = True
+TypeVar{} === TypeVar{} = True
+(a:->b) === (c:->d) = a === c && b === d
+a === b = False
+
+allSame :: [Type] -> Maybe Type
+allSame [] = Nothing
+allSame (x:[]) = Nothing
+allSame (x:xs) = case filter (\a -> not $ a === x) xs of
+    [] -> Nothing
+    (x:_) -> Just x 
+
+toType :: [Type] -> Type
+toType (t:[]) = t
+toType (t:ts) = t :-> toType ts
+
+matchTypes :: [Type] -> [Type] -> Typer Type
+matchTypes [] t = return (toType t)
+matchTypes (t1:ts1) (t2:ts2) =
+    if t1 == t2
+        then matchTypes ts1 ts2
+        else throwError (Mismatch "case" t1 t2)
 
 inferPattern :: Pattern -> Typer (Maybe Types, Type)
 inferPattern pat = do
@@ -298,21 +340,30 @@ checkGenerality n (q :-> w) (e :-> r) = do
     a <- checkGenerality n q e
     b <- checkGenerality n w r
     return (a :-> b)
-checkGenerality name a@TypeVar{} b@TypeConstant{} = throwError (MoreGeneral name a b)
+-- checkGenerality name a@TypeVar{} b@TypeConstant{} = throwError (MoreGeneral name a b)
+checkGenerality name a@TypeVar{} b@TypeConstant{} = return b
 checkGenerality name a b = throwError (Mismatch name a b) -- if types aren't equal
 
 -- | Constraints
 
 instance {-# OVERLAPS #-} Semigroup Subst where
     -- a <> b = M.fromList $ concat $ zipWith genSub (M.toList (apply a <$> b)) (M.toList a) 
-    -- a <> b = M.fromList $ go ((M.toList (apply a <$> b)) <> (M.toList a))
-    a <> b = M.union (apply a <$> b) a
+    a <> b = M.fromList $ mkLegal <$> go ((M.toList (apply a <$> b)) <> (M.toList a))
+    -- a <> b = M.union (apply a <$> b) a
 
--- genSub :: (TypeVar, Type) -> (TypeVar, Type) -> [(TypeVar, Type)]
--- genSub (a, TypeVar t1) (b, t2) | a == b = [(a, TypeVar t1), (t1, t2)]
--- genSub (a, t1) (b, TypeVar t2) | a == b = [(a, t1), (t2, t1)]
--- genSub (a, t1) (b, t2) | a == b = [(a,t1)]
--- genSub a b = [a,b]
+mkLegal :: (Type, Type) -> (Type, Type)
+mkLegal (a@TypeConstant{}, b@TypeVar{}) = (b, a)
+mkLegal (a@TypeArrow{}, b@TypeArrow{}) = (a, b)
+mkLegal (a@TypeArrow{}, b) = (b, a)
+mkLegal c = c
+
+go :: Eq a => [(a,a)] -> [(a,a)] 
+go xs = concat $ (\a -> if length a > 1 then pairs $ snd <$> a else a) <$> groupBy (\a b -> fst a == fst b) xs
+
+pairs :: [a] -> [(a,a)]
+pairs [] = []
+pairs (x:xs) = fmap (x,) xs <> pairs xs
+
 
 unify :: Type -> Type -> Typer ()
 unify a b = tell [(a, b)]
@@ -338,7 +389,7 @@ unifies t1 t2 = throwError (UnificationFail t1 t2)
 bind :: TypeVar -> Type -> Solver Subst
 bind v t | t == TypeVar v = return mempty
          | occurs v t = throwError (InfiniteType v t)
-         | otherwise = return (M.singleton v t)
+         | otherwise = return (M.singleton (TypeVar v) t)
 
 occurs :: Substitutable a => TypeVar -> a -> Bool
 occurs v a = v `S.member` free a
@@ -346,24 +397,33 @@ occurs v a = v `S.member` free a
 solver :: Unifier -> Solver Subst
 solver (sub, cs) =
     case cs of
-        [] -> return sub
+        [] -> do
+            let m = M.toList sub
+            if finished m 
+                then return sub
+                else solver (mempty, m)
         ((t1,t2):ts) -> do
             s <- unifies t1 t2
-            solver (s <> sub, ts)
+            solver (s <> sub, apply s ts)
+        -- ts -> do
+        --     s <- mconcat <$> mapM (\(a,b) -> unifies a b) ts
+        --     solver (s <> sub, mempty)
 
--- go :: Eq a => [(a,a)] -> [(a,a)] 
--- go xs = concat $ (\a -> if length a > 1 then pairs $ snd <$> a else a) <$> groupBy (\a b -> fst a == fst b) xs
--- pairs :: [a] -> [(a,a)]
--- pairs [] = []
--- pairs (x:xs) = fmap (x,) xs <> pairs xs
+finished :: [(Type, Type)] -> Bool
+finished t = and $ go <$> t
+    where
+        go (TypeArrow{}, _) = False
+        go _ = True
 
 -- | Finishing
+
+preludeEnv = M.fromList [("*",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Int")))),("+",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Int")))),("-",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Int")))),("/",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Int")))),("<",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Bool")))),("<=",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Bool")))),("<>",Forall [] (TypeArrow (TypeConstant "Text") (TypeArrow (TypeConstant "Text") (TypeConstant "Text")))),("==",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Bool")))),(">",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Bool")))),(">=",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Bool")))),("False",Forall [] (TypeConstant "Bool")),("TextCons",Forall [] (TypeArrow (TypeConstant "Char") (TypeArrow (TypeConstant "Text") (TypeConstant "Text")))),("TextNil",Forall [] (TypeConstant "Text")),("True",Forall [] (TypeConstant "Bool")),("print",Forall [TVar "a"] (TypeArrow (TypeVar (TVar "a")) (TypeConstant "IO"))),("undefined",Forall [TVar "a"] (TypeVar (TVar "a")))]
 
 runSolver :: [Constraint] -> Either Error Subst
 runSolver cs = runExcept $ solver (mempty, cs)
 
 getConstraints :: Typer Type -> Either Error [Constraint]
-getConstraints t = customRunTyper t ((\a g -> g {infered = a}) (M.singleton "+" (Forall [] (tInt :-> tInt :-> tInt))) mempty) >>= (\(_,_,c)-> return c) 
+getConstraints t = customRunTyper t ((\a g -> g {infered = a}) preludeEnv mempty) >>= (\(_,_,c)-> return c)
 
 runTyper' :: Typer a -> Either Error (a, TE, [Constraint])
 runTyper' typer = runExcept (runRWST typer mempty mempty)
@@ -387,13 +447,26 @@ runTyper'' typer te =
 runTyper :: Substitutable a => Typer a -> TE -> Either Error (a, TE)
 runTyper t te = (\(a,b,_) -> (a,b)) <$> runTyper'' t te
 
+instance Pretty Constraint where
+    pretty n (t1, t2) = pretty n t1 <+> "=" <+> pretty n t2
+
 dbg :: (Substitutable a, Show a) => Typer a -> IO ()
-dbg typer = case runTyper'' typer mempty of
+dbg typer = case runTyper'' typer ((\a g -> g {infered = a}) preludeEnv mempty) of
     Left err -> print err
     Right (a, te, cs) -> do
         print a
-        print (infered te)
-        print cs
+        -- print (infered te)
+        mapM print (runPretty <$> cs) >> return ()
+        print (runSolver cs)
+
+d cs = do
+    print "constraints"
+    mapM print (runPretty <$> cs)
+    print "pre-solved"
+    mapM print (runPretty <$> go cs)
+    print "solved"
+    mapM print (runPretty <$> (M.toList $ case runSolver cs of Right x -> x))
+    print "."
 
 getScheme :: Typer Type -> Typer Scheme
 getScheme typ = do
