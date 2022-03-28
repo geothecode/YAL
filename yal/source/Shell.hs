@@ -14,6 +14,7 @@ import Typing
 
 import Data.Map (Map)
 import Data.Map as M
+import Data.Set as S
 import Control.Monad.State
 -- import Control.Monad.Except
 import Data.Text (Text)
@@ -65,6 +66,8 @@ commandParser = do
             sc
             arg <- optional $ argParser
             let c = case com of
+                        a | (a `elem` ["e", "ext"]) -> Ext 
+                        a | (a `elem` ["dbt"]) -> DebugTyping
                         a | (a `elem` ["l", "load"]) -> LoadFile
                         a | (a `elem` ["db"]) -> DebugBuffer
                         a | (a `elem` ["cl"]) -> ClearEnv
@@ -98,6 +101,16 @@ evalCommand (c,a) sb = case c of
         print (glob sb)
         print (infered $ sigs $ penv sb)
         shell sb
+    Ext -> case a of
+        Just (Left name) -> case exec pExtensions name of
+            (Right ext, _) -> shell (applyExt ext sb)
+            (Left err, _) -> putStrLn (errorBundlePretty err)
+    DebugTyping -> case a of
+        Just (Right expr) -> do
+            case (getConstraints' (inferExpr expr) (infered $ tenv sb)) of
+                Left err -> putStrLn (runPretty err)
+                Right cs -> d cs
+            shell sb
 
 upgl :: Global -> ShellBuffer -> ShellBuffer
 upgl g b = b {glob = g <> (glob b)}
@@ -107,6 +120,9 @@ uppe pe b = b {penv = pe <> (penv b)}
 
 upte :: TE -> ShellBuffer -> ShellBuffer
 upte te b = b {tenv = te <> (tenv b)}
+
+applyExt :: Extension -> ShellBuffer -> ShellBuffer
+applyExt ext sb = sb {penv = (\g -> g {exts = S.insert ext (exts g)}) (penv sb)}
 
 shell :: ShellBuffer -> IO ()
 shell b = do

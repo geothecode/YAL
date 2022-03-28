@@ -67,7 +67,7 @@ instance Pretty Expr where
     pretty n (Postfix op e) = parens (pretty n e <> text (T.unpack op))
     pretty n (Let (Const name (pat, Nothing, expr)) exp) = "let" <+> text (T.unpack name) <+> flat n pat <+> "=" <+> pretty n expr <+> "in" <+> pretty n exp
     pretty n (Let (Const name (pat, Just cond, expr)) exp) = "let" <+> text (T.unpack name) <+> flat n pat <+> "|" <+> pretty n cond <+> "=" <+> pretty n expr <+> "in" <+> pretty n exp
-    pretty n (Case exps alts) = parensIf (n>0) ("case" <+> sepBy n "," exps <+> "of" <+> "\n\t" <+> sepBy n "\n\r" alts)
+    pretty n (Case exps alts) = parensIf (n>0) ("case" <+> sepBy n "," exps <+> "of" <+> "\n\t" <+> sepBy (n + 1) "\n\t" alts)
 
 instance Pretty Alt where
     pretty n (pats, Nothing, exp) = sepBy n "," pats <+> "->" <+> pretty n exp

@@ -412,10 +412,24 @@ pPattern = lexeme $ choice
     [
             pDataSolo
         ,   pDataPattern
+        ,   pTextPattern
         ,   keyword "_" $> WildP
         ,   VarP <$> (name <|> parens name)
         ,   LitP <$> pLit'
     ]
+
+pTextPattern :: Parser Pattern
+pTextPattern = do
+    e <- pText
+    return (exprToPattern e)
+
+exprToPattern :: Expr -> Pattern
+exprToPattern (Var n) = VarP n
+exprToPattern (Con n) = ConP n mempty
+exprToPattern (Lit n) = LitP n
+exprToPattern (App l@(App{}) r) = case exprToPattern l of
+    ConP n a -> ConP n (a <> return (exprToPattern r))
+exprToPattern (App l@(Con n) r) = ConP n (return (exprToPattern r))
 
 pDataSolo :: Parser Pattern
 pDataSolo = do

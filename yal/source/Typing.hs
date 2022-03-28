@@ -15,7 +15,7 @@ import Text.PrettyPrint hiding ((<>))
 import Data.Set                 (Set)
 import Data.Map                 (Map)
 import Data.Text                (Text)
-import Data.List                (nub, groupBy)
+import Data.List                (nub, groupBy, sortBy)
 import qualified Data.Set       as S
 import qualified Data.Map       as M
 import qualified Data.Text      as T
@@ -226,14 +226,14 @@ inferExpr e = case e of
         unify t2 t3
         return t2
 
-    -- Case exps alts -> do
-    --     ts1 <- mapM inferExpr exps
-    --     ts2 <- mapM inferAlt alts
-    --     case allSame ts2 of
-    --         Nothing -> do
-    --             let t = head ts2
-    --             matchTypes ts1 (toListT' t)
-    --         Just t -> throwError (Mismatch "case" (head ts2) t)
+    Case exps alts -> do
+        ts1 <- mapM inferExpr exps
+        ts2 <- mapM inferAlt alts
+        case allSame ts2 of
+            Nothing -> do
+                let t = head ts2
+                matchTypes (toType ts1) t
+            Just t -> throwError (Mismatch "case" (head ts2) t)
     
     i@(Infix{}) -> inferExpr (fromFixity i)
     i@(Postfix{}) -> inferExpr (fromFixity i)
@@ -242,6 +242,8 @@ infix 4 ===
 (===) :: Type -> Type -> Bool
 a@TypeConstant{} === b@TypeConstant{} | a == b = True
 TypeVar{} === TypeVar{} = True
+TypeVar{} === TypeConstant{} = True
+TypeConstant{} === TypeVar{} = True
 (a:->b) === (c:->d) = a === c && b === d
 a === b = False
 
@@ -256,12 +258,13 @@ toType :: [Type] -> Type
 toType (t:[]) = t
 toType (t:ts) = t :-> toType ts
 
-matchTypes :: [Type] -> [Type] -> Typer Type
-matchTypes [] t = return (toType t)
-matchTypes (t1:ts1) (t2:ts2) =
-    if t1 == t2
-        then matchTypes ts1 ts2
-        else throwError (Mismatch "case" t1 t2)
+matchTypes :: Type -> Type -> Typer Type
+matchTypes (a :-> b) (c :-> d) = do
+    unify a c
+    matchTypes b d
+matchTypes a (b :-> c) = do
+    unify a b
+    return c
 
 inferPattern :: Pattern -> Typer (Maybe Types, Type)
 inferPattern pat = do
@@ -298,15 +301,19 @@ inferAlt (pats, cond, e) = do
 inferDecl :: Declaration -> Typer ()
 inferDecl (Const name alt) = do
     g <- get
-    t <- inferAlt alt
-    let sc@(Forall _ sct) = generalize (infered g) t
-    scheme <- case M.lookup name (infered g) of
-        Just sc'@(Forall _ sc't) -> do
-            s <- checkGenerality name sct sc't
-            return (generalize mempty s)
-        Nothing -> return sc
-    put (g {infered = M.insertWith const name scheme (infered g)})
-inferDecl (TypeOf name sc) = modify (\g -> g {infered = M.insertWith const name sc (infered g)})
+    tv <- fresh
+    case runTyper'' (inEnvT (name, tv :-> tv) (inferAlt alt)) g of
+        Left err -> throwError err
+        Right (typ, _, _) -> do
+            unify typ (tv :-> tv)
+            let sc@(Forall _ sct) = generalize (infered g) typ
+            case M.lookup name (infered g) of
+                Just sc'@(Forall _ sc't) -> do
+                    s <- checkGenerality name sct sc't
+                    return ()
+                Nothing -> put (g {infered = M.insertWith const name sc (infered g)})
+inferDecl (TypeOf name sc) = do
+    modify (\g -> g {infered = M.insertWith const name sc (infered g)})
 inferDecl _ = return ()
 
 inferDecls :: [Declaration] -> Typer ()
@@ -373,7 +380,7 @@ unifyMany [] [] = return mempty
 unifyMany (t1:ts1) (t2:ts2) = do
     s1 <- unifies t1 t2
     s2 <- unifyMany ts1 ts2
-    return (s2 <> s1)
+    return (s1 <> s2)
 unifyMany t1 t2 = throwError (UnificationFail (arr t1) (arr t2))
     where
         arr (t:[]) = t
@@ -417,13 +424,16 @@ finished t = and $ go <$> t
 
 -- | Finishing
 
-preludeEnv = M.fromList [("*",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Int")))),("+",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Int")))),("-",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Int")))),("/",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Int")))),("<",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Bool")))),("<=",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Bool")))),("<>",Forall [] (TypeArrow (TypeConstant "Text") (TypeArrow (TypeConstant "Text") (TypeConstant "Text")))),("==",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Bool")))),(">",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Bool")))),(">=",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Bool")))),("False",Forall [] (TypeConstant "Bool")),("TextCons",Forall [] (TypeArrow (TypeConstant "Char") (TypeArrow (TypeConstant "Text") (TypeConstant "Text")))),("TextNil",Forall [] (TypeConstant "Text")),("True",Forall [] (TypeConstant "Bool")),("print",Forall [TVar "a"] (TypeArrow (TypeVar (TVar "a")) (TypeConstant "IO"))),("undefined",Forall [TVar "a"] (TypeVar (TVar "a")))]
+preludeEnv = M.fromList [("*",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Int")))),("+",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Int")))),("-",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Int")))),("/",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Int")))),("<",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Bool")))),("<=",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Bool")))),("<>",Forall [] (TypeArrow (TypeConstant "Text") (TypeArrow (TypeConstant "Text") (TypeConstant "Text")))),("==",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Bool")))),(">",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Bool")))),(">=",Forall [] (TypeArrow (TypeConstant "Int") (TypeArrow (TypeConstant "Int") (TypeConstant "Bool")))),("False",Forall [] (TypeConstant "Bool")),("TextCons",Forall [] (TypeArrow (TypeConstant "Char") (TypeArrow (TypeConstant "Text") (TypeConstant "Text")))),("TextNil",Forall [] (TypeConstant "Text")),("True",Forall [] (TypeConstant "Bool")),("print",Forall [TVar "a"] (TypeArrow (TypeVar (TVar "a")) (TypeConstant "IO"))),("undefined",Forall [TVar "a"] (TypeVar (TVar "a"))), ("$", Forall [TVar "a", TVar "b"] ((tv "a" :-> tv "b") :-> tv "a" :-> tv "b"))]
 
 runSolver :: [Constraint] -> Either Error Subst
 runSolver cs = runExcept $ solver (mempty, cs)
 
-getConstraints :: Typer Type -> Either Error [Constraint]
+getConstraints :: Typer a -> Either Error [Constraint]
 getConstraints t = customRunTyper t ((\a g -> g {infered = a}) preludeEnv mempty) >>= (\(_,_,c)-> return c)
+
+getConstraints' :: Typer a -> Schemes -> Either Error [Constraint]
+getConstraints' t scs = customRunTyper t ((\a g -> g {infered = a}) scs mempty) >>= (\(_,_,c)-> return c)
 
 runTyper' :: Typer a -> Either Error (a, TE, [Constraint])
 runTyper' typer = runExcept (runRWST typer mempty mempty)
@@ -454,19 +464,19 @@ dbg :: (Substitutable a, Show a) => Typer a -> IO ()
 dbg typer = case runTyper'' typer ((\a g -> g {infered = a}) preludeEnv mempty) of
     Left err -> print err
     Right (a, te, cs) -> do
-        print a
+        putStrLn $ show a
         -- print (infered te)
-        mapM print (runPretty <$> cs) >> return ()
-        print (runSolver cs)
+        mapM putStrLn (runPretty <$> cs) >> return ()
+        putStrLn $ show (runSolver cs)
 
 d cs = do
-    print "constraints"
-    mapM print (runPretty <$> cs)
-    print "pre-solved"
-    mapM print (runPretty <$> go cs)
-    print "solved"
-    mapM print (runPretty <$> (M.toList $ case runSolver cs of Right x -> x))
-    print "."
+    putStrLn"constraints:"
+    mapM putStrLn (runPretty <$> cs)
+    putStrLn "pre-solved:"
+    mapM putStrLn (runPretty <$> go cs)
+    putStrLn "solved:"
+    mapM putStrLn (runPretty <$> (M.toList $ case runSolver cs of Right x -> x))
+    return ()
 
 getScheme :: Typer Type -> Typer Scheme
 getScheme typ = do

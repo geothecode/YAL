@@ -177,4 +177,6 @@ data Command
     | ReloadFile
     | ClearEnv
     | DebugBuffer
+    | Ext
+    | DebugTyping
     deriving (Show, Eq, Ord)
