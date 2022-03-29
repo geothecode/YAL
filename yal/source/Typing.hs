@@ -299,13 +299,13 @@ inferAlt (pats, cond, e) = do
     return (foldr (:->) t typs)
 
 inferDecl :: Declaration -> Typer ()
-inferDecl (Const name alt) = do
+inferDecl (Const name alt@(pats,_,_)) = do
     g <- get
     tv <- fresh
-    case runTyper'' (inEnvT (name, tv :-> tv) (inferAlt alt)) g of
+    case runTyper'' (if pats /= [] then inEnvT (name, tv :-> tv) (inferAlt alt) else (inferAlt alt)) g of
         Left err -> throwError err
         Right (typ, _, _) -> do
-            unify typ (tv :-> tv)
+            if pats /= [] then unify typ (tv :-> tv) else return ()
             let sc@(Forall _ sct) = generalize (infered g) typ
             case M.lookup name (infered g) of
                 Just sc'@(Forall _ sc't) -> do
